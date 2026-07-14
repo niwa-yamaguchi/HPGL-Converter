@@ -57,6 +57,18 @@ describe('tokenizeHpgl', () => {
     expect(Array.from(result.tokens[0].params)).toEqual([0x80, 0xff, 0x7f]);
   });
 
+  it('keeps adjacent ASCII letter bytes inside PE params through the semicolon', () => {
+    const data = new Uint8Array([
+      0x50, 0x45, 0x41, 0x42, 0xbf, 0x3b,
+      0x50, 0x55, 0x3b,
+    ]);
+
+    const result = tokenizeHpgl(data);
+
+    expect(result.tokens.map(token => token.code)).toEqual(['PE', 'PU']);
+    expect(Array.from(result.tokens[0].params)).toEqual([0x41, 0x42, 0xbf]);
+  });
+
   it('warns once for an invalid prefix and recovers at the next semicolon', () => {
     const result = tokenizeHpgl(ascii('?broken;PA0,0;'));
 

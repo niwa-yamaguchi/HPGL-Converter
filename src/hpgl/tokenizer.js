@@ -91,6 +91,14 @@ function readOrdinaryParams(data, cursor) {
   return { params, nextCursor: cursor };
 }
 
+function readPeParams(data, cursor) {
+  const paramsStart = cursor;
+  while (cursor < data.length && data[cursor] !== SEMICOLON) {
+    cursor += 1;
+  }
+  return { params: data.slice(paramsStart, cursor), nextCursor: cursor };
+}
+
 export function tokenizeHpgl(data) {
   const tokens = [];
   const diagnostics = [];
@@ -126,6 +134,13 @@ export function tokenizeHpgl(data) {
       const label = readLabel(data, paramsStart, decoder);
       tokens.push({ code, params: label.params, offset, label: label.label });
       cursor = label.nextCursor;
+      continue;
+    }
+
+    if (code === 'PE') {
+      const pe = readPeParams(data, paramsStart);
+      tokens.push({ code, params: pe.params, offset });
+      cursor = pe.nextCursor;
       continue;
     }
 

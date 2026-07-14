@@ -1,4 +1,5 @@
 import { createCoordinateTransform } from './coordinates.js';
+import { decodePe } from './pe-decoder.js';
 import { tokenizeHpgl } from './tokenizer.js';
 
 const ASCII_DECODER = new TextDecoder('utf-8');
@@ -196,6 +197,13 @@ export function parseHpgl(data, context) {
     move(destinations, token.offset);
   }
 
+  function selectPen(pen, command) {
+    if (!Number.isInteger(pen) || pen < 0 || pen > 255) {
+      throw new RangeError(`${command} pen number must be an integer from 0 through 255`);
+    }
+    state.color = pen === 0 ? 1 : pen;
+  }
+
   function handlePen(token) {
     flushPolyline();
     try {
@@ -203,14 +211,42 @@ export function parseHpgl(data, context) {
       if (values.length !== 1) {
         throw new RangeError('SP requires one pen number');
       }
-      const pen = values[0];
-      if (!Number.isInteger(pen) || pen < 0 || pen > 255) {
-        throw new RangeError('SP pen number must be an integer from 0 through 255');
-      }
-      state.color = pen === 0 ? 1 : pen;
+      selectPen(values[0], 'SP');
     } catch (error) {
       state.color = 7;
       throw error;
+    }
+  }
+
+  function handlePe(token) {
+    const decoded = decodePe(token.params);
+    if (decoded.error) {
+      throw new TypeError(decoded.error);
+    }
+
+    for (const event of decoded.events) {
+      if (event.type === 'move') {
+        const destinations = prepareDestinations([event.x, event.y], event.absolute);
+        state.penDown = event.penDown;
+        if (!event.penDown) {
+          flushPolyline();
+        }
+        move(destinations, token.offset);
+        continue;
+      }
+
+      flushPolyline();
+      try {
+        selectPen(event.value, 'PE');
+      } catch (error) {
+        state.color = 7;
+        addDiagnostic(diagnostic(
+          'error',
+          token,
+          error instanceof Error ? error.message : 'Invalid PE pen selection',
+          context.fileName,
+        ));
+      }
     }
   }
 
@@ -343,6 +379,10 @@ export function parseHpgl(data, context) {
       }
       if (token.code === 'SP') {
         handlePen(token);
+        continue;
+      }
+      if (token.code === 'PE') {
+        handlePe(token);
         continue;
       }
       if (token.code === 'IN') {
