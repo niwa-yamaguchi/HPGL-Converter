@@ -27,6 +27,14 @@ class FakeWorker {
 
 const file = name => ({ name, arrayBuffer: async () => new ArrayBuffer(0) });
 
+function deferred() {
+  let resolve;
+  const promise = new Promise(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function setup(options = {}) {
   const workers = [];
   const workerFactory = vi.fn(() => {
@@ -141,6 +149,31 @@ describe('createConversionJob', () => {
 });
 
 describe('converter worker protocol', () => {
+  it('does not start reading the second file before the first read settles', async () => {
+    const firstRead = deferred();
+    const firstArrayBuffer = vi.fn(() => firstRead.promise);
+    const secondArrayBuffer = vi.fn(async () => (
+      new TextEncoder().encode('PD0,40;PU;').buffer
+    ));
+    const conversion = handleConversionMessage({
+      type: 'convert',
+      requestId: 'sequential-read',
+      files: [
+        { name: 'first.hpgl', arrayBuffer: firstArrayBuffer },
+        { name: 'second.hpgl', arrayBuffer: secondArrayBuffer },
+      ],
+      layerNames: ['first', 'second'],
+    }, () => {});
+
+    expect(firstArrayBuffer).toHaveBeenCalledOnce();
+    expect(secondArrayBuffer).not.toHaveBeenCalled();
+
+    firstRead.resolve(new TextEncoder().encode('PD40,0;PU;').buffer);
+    await conversion;
+
+    expect(secondArrayBuffer).toHaveBeenCalledOnce();
+  });
+
   it('reads sequentially, isolates read failures, forwards progress, and transfers the result', async () => {
     const order = [];
     const files = [
