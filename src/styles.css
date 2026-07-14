@@ -143,6 +143,7 @@ h2 {
 
 .drop-zone {
   display: grid;
+  width: 100%;
   min-height: 190px;
   place-items: center;
   align-content: center;
@@ -150,6 +151,8 @@ h2 {
   border: 2px dashed #7994a9;
   border-radius: 12px;
   background: #f7fafb;
+  color: inherit;
+  appearance: none;
   text-align: center;
   transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
 }
@@ -160,11 +163,12 @@ h2 {
   transform: translateY(-2px);
 }
 
-.drop-zone[aria-disabled="true"] {
+.drop-zone:disabled {
   opacity: 0.6;
 }
 
 .drop-title {
+  display: block;
   margin-bottom: 6px;
   color: #10243e;
   font-size: 1.12rem;
@@ -172,13 +176,13 @@ h2 {
 }
 
 .drop-help {
+  display: block;
   margin-bottom: 18px;
   color: #607284;
   font-size: 0.9rem;
 }
 
 .primary-button,
-.secondary-button,
 .cancel-button,
 .icon-button {
   min-height: 42px;
@@ -198,11 +202,14 @@ h2 {
   background: #0d5d94;
 }
 
-.secondary-button {
+.drop-action {
+  display: inline-block;
   padding: 10px 20px;
   border: 1px solid #315d7e;
+  border-radius: 8px;
   background: #fff;
   color: #214e70;
+  font-weight: 750;
 }
 
 .cancel-button {

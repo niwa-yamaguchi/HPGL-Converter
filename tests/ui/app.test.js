@@ -71,7 +71,7 @@ describe('mountApp', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows the private local workflow and exposes an accessible keyboard drop zone', () => {
+  it('shows the private local workflow with one native file-picker tab stop', () => {
     mounted = mountApp(document.querySelector('#test-root'), { createConversionJob: vi.fn() });
 
     expect(document.body.textContent).toContain('HPGL → DXF Converter');
@@ -83,12 +83,24 @@ describe('mountApp', () => {
 
     const input = document.querySelector('[data-testid="file-input"]');
     expect(input.getAttribute('aria-label')).toBe('HPGLファイルを選択');
+    expect(input.hidden || input.tabIndex === -1).toBe(true);
     expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
     const click = vi.spyOn(input, 'click');
     const zone = document.querySelector('[data-testid="drop-zone"]');
-    zone.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    zone.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
-    expect(click).toHaveBeenCalledTimes(2);
+    expect(zone).toBeInstanceOf(HTMLButtonElement);
+    expect(zone.type).toBe('button');
+    expect(zone.hasAttribute('role')).toBe(false);
+    expect(zone.hasAttribute('tabindex')).toBe(false);
+    expect(zone.contains(input)).toBe(false);
+    expect(zone.querySelector('button, input, select, textarea, a[href], [tabindex]')).toBeNull();
+
+    const pickerControls = document.querySelectorAll(
+      '[data-testid="file-input"], [data-testid="drop-zone"], [data-testid="select-button"]',
+    );
+    expect([...pickerControls].filter(control => !control.hidden && control.tabIndex >= 0)).toEqual([zone]);
+
+    zone.querySelector('[data-testid="drop-title"]').click();
+    expect(click).toHaveBeenCalledOnce();
   });
 
   it('adds supported files while rejecting unsupported and duplicate files with a notice', () => {
@@ -187,17 +199,25 @@ describe('mountApp', () => {
     document.querySelector('[data-testid="convert-button"]').click();
     await vi.waitFor(() => expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull());
 
+    URL.createObjectURL.mockClear();
+    URL.revokeObjectURL.mockClear();
     document.querySelector('[data-testid="download-button"]').click();
 
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
     expect(URL.createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'application/dxf' }));
     expect(anchorClick).toHaveBeenCalledOnce();
     expect(anchorClick.mock.instances[0].download).toBe('production.dxf');
     expect(anchorClick.mock.instances[0].isConnected).toBe(false);
+    expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-download');
   });
 
-  it('cleans the previous result on rerun and destroy', async () => {
+  it('releases each new download URL once without repeating cleanup on rerun or destroy', async () => {
     const jobs = [];
+    URL.createObjectURL
+      .mockReset()
+      .mockReturnValueOnce('blob:first-download')
+      .mockReturnValueOnce('blob:second-download');
     mounted = mountApp(document.querySelector('#test-root'), {
       createConversionJob: () => {
         const job = deferredJob();
@@ -210,15 +230,37 @@ describe('mountApp', () => {
     jobs[0].resolve(result());
     await vi.waitFor(() => expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull());
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    document.querySelector('[data-testid="download-button"]').click();
 
+    URL.createObjectURL.mockClear();
+    URL.revokeObjectURL.mockClear();
+    document.querySelector('[data-testid="download-button"]').click();
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first-download');
+
+    URL.createObjectURL.mockClear();
+    URL.revokeObjectURL.mockClear();
     document.querySelector('[data-testid="convert-button"]').click();
     expect(document.querySelector('[data-testid="download-button"]')).toBeNull();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
     jobs[1].resolve(result());
-    await flush();
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull());
+
+    URL.createObjectURL.mockClear();
+    URL.revokeObjectURL.mockClear();
+    document.querySelector('[data-testid="download-button"]').click();
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second-download');
+
+    URL.createObjectURL.mockClear();
+    URL.revokeObjectURL.mockClear();
     mounted.destroy();
     mounted = undefined;
-    expect(URL.revokeObjectURL).toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 
   it('restores controls without a download after a fatal conversion error', async () => {

@@ -64,14 +64,14 @@ export function mountApp(root, deps = {}) {
           <span class="file-count" data-testid="file-count">0 ファイル</span>
         </div>
 
-        <div class="drop-zone" data-testid="drop-zone" role="button" tabindex="0"
+        <input data-testid="file-input" type="file" multiple hidden aria-label="HPGLファイルを選択"
+          accept=".hpgl,.hpg,.plt,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99">
+        <button class="drop-zone" data-testid="drop-zone" type="button"
           aria-label="HPGLファイルを追加" aria-describedby="drop-help">
-          <input data-testid="file-input" class="sr-only" type="file" multiple aria-label="HPGLファイルを選択"
-            accept=".hpgl,.hpg,.plt,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99">
-          <p class="drop-title">HPGLファイルをここへドロップ</p>
-          <p id="drop-help" class="drop-help">または Enter / Space キーでファイル選択を開けます</p>
-          <button type="button" class="secondary-button" data-testid="select-button">ファイルを選択</button>
-        </div>
+          <span class="drop-title" data-testid="drop-title">HPGLファイルをここへドロップ</span>
+          <span id="drop-help" class="drop-help">または Enter / Space キーでファイル選択を開けます</span>
+          <span class="drop-action" aria-hidden="true">ファイルを選択</span>
+        </button>
 
         <div class="table-wrap">
           <table>
@@ -131,7 +131,6 @@ export function mountApp(root, deps = {}) {
 
   const nodes = {
     input: root.querySelector('[data-testid="file-input"]'),
-    select: root.querySelector('[data-testid="select-button"]'),
     dropZone: root.querySelector('[data-testid="drop-zone"]'),
     fileList: root.querySelector('[data-testid="file-list"]'),
     fileCount: root.querySelector('[data-testid="file-count"]'),
@@ -155,7 +154,6 @@ export function mountApp(root, deps = {}) {
     result: null,
     job: null,
     token: null,
-    objectUrl: null,
     destroyed: false,
   };
   const listeners = [];
@@ -170,15 +168,7 @@ export function mountApp(root, deps = {}) {
     nodes.status.dataset.kind = kind;
   }
 
-  function revokeObjectUrl() {
-    if (state.objectUrl && typeof URL.revokeObjectURL === 'function') {
-      URL.revokeObjectURL(state.objectUrl);
-    }
-    state.objectUrl = null;
-  }
-
   function clearResult() {
-    revokeObjectUrl();
     state.result = null;
     nodes.results.hidden = true;
     nodes.resultsContent.replaceChildren();
@@ -262,11 +252,10 @@ export function mountApp(root, deps = {}) {
     }
 
     nodes.input.disabled = state.converting;
-    nodes.select.disabled = state.converting;
+    nodes.dropZone.disabled = state.converting;
     nodes.outputName.disabled = state.converting;
     nodes.convert.disabled = state.converting || state.files.length === 0;
     nodes.cancel.hidden = !state.converting;
-    nodes.dropZone.setAttribute('aria-disabled', String(state.converting));
   }
 
   function addFiles(fileList) {
@@ -376,11 +365,10 @@ export function mountApp(root, deps = {}) {
     if (!state.result?.buffer) {
       return;
     }
-    revokeObjectUrl();
     const blob = new Blob([state.result.buffer], { type: 'application/dxf' });
-    state.objectUrl = URL.createObjectURL(blob);
+    const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
-    anchor.href = state.objectUrl;
+    anchor.href = objectUrl;
     anchor.download = normalizeOutputName(nodes.outputName.value);
     anchor.hidden = true;
     document.body.append(anchor);
@@ -388,7 +376,7 @@ export function mountApp(root, deps = {}) {
       anchor.click();
     } finally {
       anchor.remove();
-      revokeObjectUrl();
+      URL.revokeObjectURL(objectUrl);
     }
     announce(`${anchor.download} のダウンロードを開始しました。`, 'success');
   }
@@ -478,15 +466,8 @@ export function mountApp(root, deps = {}) {
     addFiles(nodes.input.files);
     nodes.input.value = '';
   });
-  listen(nodes.select, 'click', () => nodes.input.click());
-  listen(nodes.dropZone, 'click', event => {
-    if (event.target === nodes.dropZone && !state.converting) {
-      nodes.input.click();
-    }
-  });
-  listen(nodes.dropZone, 'keydown', event => {
-    if ((event.key === 'Enter' || event.key === ' ') && !state.converting) {
-      event.preventDefault();
+  listen(nodes.dropZone, 'click', () => {
+    if (!state.converting) {
       nodes.input.click();
     }
   });
@@ -527,7 +508,6 @@ export function mountApp(root, deps = {}) {
         state.job.cancel();
         state.job = null;
       }
-      revokeObjectUrl();
       listeners.splice(0).forEach(remove => remove());
       root.replaceChildren();
     },
