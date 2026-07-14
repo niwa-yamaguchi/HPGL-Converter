@@ -25,6 +25,13 @@ function validateCoordinatePair(x, y, operation) {
   }
 }
 
+function validateResultPair(result, operation) {
+  if (!result.every(Number.isFinite)) {
+    throw new RangeError(`${operation} result coordinates must be finite`);
+  }
+  return result;
+}
+
 export function createCoordinateTransform() {
   let p1;
   let p2;
@@ -43,10 +50,14 @@ export function createCoordinateTransform() {
 
   function scales() {
     if (sc !== null && p2 !== null) {
-      return [
+      const result = [
         ((p2[0] - p1[0]) / (sc[1] - sc[0])) * MM_PER_PLOTTER_UNIT,
         ((p2[1] - p1[1]) / (sc[3] - sc[2])) * MM_PER_PLOTTER_UNIT,
       ];
+      if (!result.every(Number.isFinite)) {
+        throw new RangeError('Coordinate scales must be finite');
+      }
+      return result;
     }
     return [MM_PER_PLOTTER_UNIT, MM_PER_PLOTTER_UNIT];
   }
@@ -55,18 +66,21 @@ export function createCoordinateTransform() {
     validateCoordinatePair(x, y, 'Absolute');
     if (sc !== null && p2 !== null) {
       const [scaleX, scaleY] = scales();
-      return [(x - sc[0]) * scaleX, (y - sc[2]) * scaleY];
+      return validateResultPair(
+        [(x - sc[0]) * scaleX, (y - sc[2]) * scaleY],
+        'Absolute',
+      );
     }
-    return [
+    return validateResultPair([
       (x - p1[0]) * MM_PER_PLOTTER_UNIT,
       (y - p1[1]) * MM_PER_PLOTTER_UNIT,
-    ];
+    ], 'Absolute');
   }
 
   function deltaToMm(dx, dy) {
     validateCoordinatePair(dx, dy, 'Relative');
     const [scaleX, scaleY] = scales();
-    return [dx * scaleX, dy * scaleY];
+    return validateResultPair([dx * scaleX, dy * scaleY], 'Relative');
   }
 
   function radiusToMm(radius) {
@@ -74,7 +88,14 @@ export function createCoordinateTransform() {
       throw new TypeError('Radius must be a finite number');
     }
     const [scaleX, scaleY] = scales();
-    return radius * ((Math.abs(scaleX) + Math.abs(scaleY)) / 2);
+    const result = radius * ((Math.abs(scaleX) + Math.abs(scaleY)) / 2);
+    if (!Number.isFinite(result)) {
+      throw new RangeError('Transformed radius must be finite');
+    }
+    if (result <= 0) {
+      throw new RangeError('Transformed radius must be positive');
+    }
+    return result;
   }
 
   function applyIP(values) {
@@ -107,6 +128,8 @@ export function createCoordinateTransform() {
       explicitP1[0] + (width * percentages[2]) / 100,
       explicitP1[1] + (height * percentages[3]) / 100,
     ];
+    validateResultPair(nextP1, 'IR P1');
+    validateResultPair(nextP2, 'IR P2');
     p1 = nextP1;
     p2 = nextP2;
     return true;

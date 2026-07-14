@@ -156,8 +156,14 @@ export function parseHpgl(data, context) {
         mm = state.transform.toMm(raw[0], raw[1]);
       } else {
         raw = [raw[0] + values[index], raw[1] + values[index + 1]];
+        if (!raw.every(Number.isFinite)) {
+          throw new RangeError('Relative raw coordinates must be finite');
+        }
         const delta = state.transform.deltaToMm(values[index], values[index + 1]);
         mm = [mm[0] + delta[0], mm[1] + delta[1]];
+        if (!mm.every(Number.isFinite)) {
+          throw new RangeError('Relative transformed coordinates must be finite');
+        }
       }
       destinations.push({ raw: [...raw], mm: [...mm] });
     }
@@ -274,6 +280,10 @@ export function parseHpgl(data, context) {
     if (sweep === 0) {
       throw new RangeError(`${token.code} sweep must be non-zero`);
     }
+    const fullCircle = isFullCircleSweep(sweep);
+    if (!fullCircle && Math.abs(sweep) >= 360) {
+      throw new RangeError(`${token.code} sweep magnitude must be less than 360 degrees or a full circle`);
+    }
 
     const relative = token.code === 'AR';
     const centerRaw = relative
@@ -294,13 +304,16 @@ export function parseHpgl(data, context) {
     const centerMm = relative
       ? (() => {
         const delta = state.transform.deltaToMm(values[0], values[1]);
-        return [state.positionMm[0] + delta[0], state.positionMm[1] + delta[1]];
+        const result = [state.positionMm[0] + delta[0], state.positionMm[1] + delta[1]];
+        if (!result.every(Number.isFinite)) {
+          throw new RangeError(`${token.code} transformed center must be finite`);
+        }
+        return result;
       })()
       : state.transform.toMm(centerRaw[0], centerRaw[1]);
     const radius = state.transform.radiusToMm(rawRadius);
     const startAngle = Math.atan2(startVector[1], startVector[0]) * (180 / Math.PI);
     const endAngle = startAngle + sweep;
-    const fullCircle = isFullCircleSweep(sweep);
     let endpointRaw = [...state.rawPosition];
     let endpointMm = [...state.positionMm];
 
@@ -312,9 +325,18 @@ export function parseHpgl(data, context) {
         startVector[0] * cosine - startVector[1] * sine,
         startVector[0] * sine + startVector[1] * cosine,
       ];
+      if (!endVector.every(Number.isFinite)) {
+        throw new RangeError(`${token.code} endpoint vector must be finite`);
+      }
       endpointRaw = [centerRaw[0] + endVector[0], centerRaw[1] + endVector[1]];
+      if (!endpointRaw.every(Number.isFinite)) {
+        throw new RangeError(`${token.code} endpoint must be finite`);
+      }
       const endpointDelta = state.transform.deltaToMm(endVector[0], endVector[1]);
       endpointMm = [centerMm[0] + endpointDelta[0], centerMm[1] + endpointDelta[1]];
+      if (!endpointMm.every(Number.isFinite)) {
+        throw new RangeError(`${token.code} transformed endpoint must be finite`);
+      }
     }
 
     flushPolyline();

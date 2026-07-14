@@ -81,6 +81,44 @@ describe('convertInputs', () => {
     expect(section(decode(result.buffer), 'ENTITIES')).toContain('62\n4\n');
   });
 
+  it.each([
+    ['a 450 degree arc', 'PA40,0;PD;AA0,0,450;PU;IN;SP6;PD40,0;PU;', 'AA'],
+    ['a zero-radius transformed circle', 'IP0,0,0,0;SC0,100,0,100;CI40;IN;SP6;PD40,0;PU;', 'CI'],
+    [
+      'non-finite transformed coordinates',
+      `IP0,0,4000,4000;SC0,100,0,100;PR;PD${`1${'0'.repeat(308)}`},0,`
+        + `${`1${'0'.repeat(308)}`},0;PU;IN;SP6;PD40,0;PU;`,
+      'PD',
+    ],
+  ])('diagnoses and isolates %s while retaining later geometry and files', async (
+    _label,
+    damagedHpgl,
+    command,
+  ) => {
+    const result = await convertInputs([
+      { name: 'damaged.hpgl', layerName: 'damaged', data: ascii(damagedHpgl) },
+      { name: 'good.hpgl', layerName: 'good', data: ascii('SP5;PD0,40;PU;') },
+    ], () => {});
+
+    expect(result.files[0]).toMatchObject({
+      geometryCount: 1,
+      errorCount: 1,
+      warningCount: 0,
+      diagnostics: [expect.objectContaining({
+        severity: 'error', fileName: 'damaged.hpgl', command,
+      })],
+    });
+    expect(result.files[1]).toMatchObject({
+      geometryCount: 1, errorCount: 0, warningCount: 0,
+    });
+    expect(result.totals).toEqual({
+      fileCount: 2, geometryCount: 2, errorCount: 1, warningCount: 0,
+    });
+    const entities = section(decode(result.buffer), 'ENTITIES');
+    expect(entities).toContain('8\ndamaged\n62\n6\n');
+    expect(entities).toContain('8\ngood\n62\n5\n');
+  });
+
   it('produces a complete decodable DXF for no inputs', async () => {
     const progress = vi.fn();
     const result = await convertInputs([], progress);

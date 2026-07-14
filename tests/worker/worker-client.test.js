@@ -200,11 +200,23 @@ describe('converter worker protocol', () => {
     }, (...args) => posted.push(args));
 
     expect(order).toEqual(['bad:start', 'bad:end', 'good:start', 'good:end']);
-    expect(posted.map(([message]) => message.type)).toEqual(['progress', 'progress', 'complete']);
+    expect(posted.map(([message]) => message.type)).toEqual([
+      'progress', 'progress', 'progress', 'progress', 'complete',
+    ]);
     expect(posted[0][0]).toMatchObject({
+      type: 'progress',
+      requestId: 'request-7',
+      event: { phase: 'reading', fileName: 'bad.hpgl', index: 1, total: 2 },
+    });
+    expect(posted[1][0]).toMatchObject({
+      type: 'progress',
+      requestId: 'request-7',
+      event: { phase: 'reading', fileName: 'good.hpgl', index: 2, total: 2 },
+    });
+    expect(posted[2][0]).toMatchObject({
       type: 'progress', requestId: 'request-7', event: { fileName: 'bad.hpgl', index: 1 },
     });
-    const [complete, transfer] = posted[2];
+    const [complete, transfer] = posted[4];
     expect(complete.requestId).toBe('request-7');
     expect(complete.result.files[0]).toMatchObject({ geometryCount: 0, errorCount: 1 });
     expect(complete.result.files[1]).toMatchObject({ geometryCount: 1, errorCount: 0 });

@@ -79,6 +79,8 @@ describe('mountApp', () => {
     expect(document.body.textContent).toContain('.hpgl');
     expect(document.body.textContent).toContain('40 HPGL単位 = 1 mm');
     expect(document.querySelector('[aria-live="polite"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="progress"]').getAttribute('aria-label'))
+      .toBe('変換進捗');
     expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(true);
 
     const input = document.querySelector('[data-testid="file-input"]');
@@ -152,6 +154,10 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="output-name"]').disabled).toBe(true);
     expect(document.querySelector('[data-testid="remove-button"]').disabled).toBe(true);
     expect(document.querySelector('[data-testid="cancel-button"]').hidden).toBe(false);
+
+    job.options.onProgress({ phase: 'reading', fileName: 'sample.hpgl', index: 1, total: 1 });
+    expect(document.querySelector('[data-testid="progress"]').value).toBe(0);
+    expect(document.body.textContent).toContain('sample.hpgl を読み込んでいます');
 
     job.options.onProgress({ fileName: 'sample.hpgl', index: 1, total: 1, geometryCount: 3, errorCount: 0, warningCount: 1 });
     expect(document.querySelector('[data-testid="progress"]').value).toBe(1);

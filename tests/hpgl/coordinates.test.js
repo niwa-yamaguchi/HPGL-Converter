@@ -68,6 +68,16 @@ describe('createCoordinateTransform', () => {
     expect(transform.points()).toEqual(before);
   });
 
+  it('rejects non-finite IR calculation results without mutating the transform', () => {
+    const transform = createCoordinateTransform();
+    const big = Number(`1${'0'.repeat(308)}`);
+    transform.applyIP([-big, 0, big, 100]);
+    const before = transform.points();
+
+    expect(() => transform.applyIR([0, 0, 100, 100])).toThrow(/finite/i);
+    expect(transform.points()).toEqual(before);
+  });
+
   it('validates IP values atomically and reset restores defaults', () => {
     const transform = createCoordinateTransform();
     transform.applyIP([100, 200, 500, 600]);

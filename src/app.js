@@ -117,7 +117,7 @@ export function mountApp(root, deps = {}) {
           <button type="button" class="cancel-button" data-testid="cancel-button" hidden>キャンセル</button>
         </div>
         <div class="progress-wrap" data-testid="progress-wrap" hidden>
-          <progress data-testid="progress" value="0" max="1">0%</progress>
+          <progress data-testid="progress" value="0" max="1" aria-label="変換進捗">0%</progress>
           <span data-testid="current-file">変換を準備しています</span>
         </div>
         <p class="status-message" data-testid="status" aria-live="polite">ファイルを追加してください。</p>
@@ -435,6 +435,15 @@ export function mountApp(root, deps = {}) {
       }
       const index = Math.max(0, number(event.index));
       const total = Math.max(1, number(event.total) || state.files.length);
+      if (event.phase === 'reading') {
+        const completed = Math.max(0, index - 1);
+        state.progressIndex = Math.min(completed, state.files.length);
+        nodes.progress.max = total;
+        nodes.progress.value = Math.min(completed, total);
+        nodes.currentFile.textContent = `${event.fileName ?? 'ファイル'} を読み込んでいます (${index} / ${total})`;
+        renderFiles();
+        return;
+      }
       state.progressIndex = Math.min(index, state.files.length);
       if (index > 0) {
         state.progressByIndex.set(index - 1, event);

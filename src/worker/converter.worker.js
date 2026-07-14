@@ -43,6 +43,16 @@ export async function handleConversionMessage(message, post) {
         throw new TypeError(`Conversion layerName ${index} must be a string`);
       }
 
+      post({
+        type: 'progress',
+        requestId,
+        event: {
+          phase: 'reading',
+          fileName: file.name,
+          index: index + 1,
+          total: message.files.length,
+        },
+      });
       try {
         const buffer = await file.arrayBuffer();
         inputs.push({ name: file.name, layerName, data: new Uint8Array(buffer) });
