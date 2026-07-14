@@ -76,7 +76,7 @@ DXFオブジェクトへ一意な大文字16進handleを割り当てる。割り
 - `VIEW`: 空
 - `UCS`: 空
 - `APPID`: `ACAD`
-- `DIMSTYLE`: `STANDARD`
+- `DIMSTYLE`: 空
 - `BLOCK_RECORD`: `*Model_Space`、`*Paper_Space`
 
 各table、table recordにhandle、owner、`AcDbSymbolTable`、`AcDbSymbolTableRecord`およびrecord固有のsubclass markerを設定する。
