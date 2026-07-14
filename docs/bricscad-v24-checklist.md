@@ -7,7 +7,7 @@
 - Converter commit: `fe9f5ed6aa3e882308cf6300b47599517004c7cb`
 - Task 9 verification commit: ________________________________
 - 出力ファイル名: `hpgl-dxf-reference-8-files.dxf`
-- 出力ファイルの絶対パス: `C:\Users\yamaguchi\Documents\ws\hpgl-dxf\.worktrees\hpgl-dxf-implementation\hpgl-dxf-reference-8-files.dxf`
+- 出力ファイルの絶対パス: `C:\Users\yamaguchi\Documents\ws\hpgl-dxf\hpgl-dxf-reference-8-files.dxf`
 - BricsCAD V24 の正確なバージョン: ________________________________
 - 確認者: ________________________________
 - 確認日（YYYY-MM-DD）: ________________________________
