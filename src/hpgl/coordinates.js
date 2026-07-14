@@ -28,11 +28,15 @@ function validateCoordinatePair(x, y, operation) {
 export function createCoordinateTransform() {
   let p1;
   let p2;
+  let explicitP1;
+  let explicitP2;
   let sc;
 
   function reset() {
     p1 = [0, 0];
     p2 = null;
+    explicitP1 = [0, 0];
+    explicitP2 = null;
     sc = null;
     return true;
   }
@@ -76,30 +80,32 @@ export function createCoordinateTransform() {
   function applyIP(values) {
     validateValues(values, [2, 4], 'IP');
     const nextP1 = [values[0], values[1]];
-    const nextP2 = values.length === 4 ? [values[2], values[3]] : p2;
+    const nextP2 = values.length === 4 ? [values[2], values[3]] : explicitP2;
     p1 = nextP1;
     p2 = nextP2;
+    explicitP1 = [...nextP1];
+    explicitP2 = nextP2 === null ? null : [...nextP2];
     return true;
   }
 
   function applyIR(values) {
     validateValues(values, [0, 2, 4], 'IR');
-    if (p2 === null) {
+    if (explicitP2 === null) {
       throw new RangeError('IR requires an explicit IP P2 point');
     }
 
     const percentages = values.length === 0
       ? [0, 0, 100, 100]
       : [values[0], values[1], values[2] ?? 100, values[3] ?? 100];
-    const width = p2[0] - p1[0];
-    const height = p2[1] - p1[1];
+    const width = explicitP2[0] - explicitP1[0];
+    const height = explicitP2[1] - explicitP1[1];
     const nextP1 = [
-      p1[0] + (width * percentages[0]) / 100,
-      p1[1] + (height * percentages[1]) / 100,
+      explicitP1[0] + (width * percentages[0]) / 100,
+      explicitP1[1] + (height * percentages[1]) / 100,
     ];
     const nextP2 = [
-      p1[0] + (width * percentages[2]) / 100,
-      p1[1] + (height * percentages[3]) / 100,
+      explicitP1[0] + (width * percentages[2]) / 100,
+      explicitP1[1] + (height * percentages[3]) / 100,
     ];
     p1 = nextP1;
     p2 = nextP2;

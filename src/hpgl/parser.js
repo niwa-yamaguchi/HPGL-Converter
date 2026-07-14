@@ -48,6 +48,20 @@ function validateNoParameters(values, command) {
   }
 }
 
+function validateIndependentShape(token) {
+  if (token.code === 'LB') {
+    return;
+  }
+
+  const values = parseNumbers(token.params);
+  const allowedLengths = token.code === 'CI' ? [1, 2] : [3, 4];
+  if (!allowedLengths.includes(values.length)) {
+    throw new RangeError(
+      `${token.code} requires ${allowedLengths.join(' or ')} numeric values`,
+    );
+  }
+}
+
 export function parseHpgl(data, context) {
   const tokenized = tokenizeHpgl(data);
   const diagnostics = [...tokenized.diagnostics];
@@ -176,10 +190,12 @@ export function parseHpgl(data, context) {
         continue;
       }
       if (token.code === 'DF') {
+        validateNoParameters(parseNumbers(token.params), 'DF');
         continue;
       }
 
       if (INDEPENDENT_SHAPE_COMMANDS.has(token.code)) {
+        validateIndependentShape(token);
         flushPolyline();
       }
       diagnostics.push(diagnostic('warning', token, 'Unsupported HPGL command'));

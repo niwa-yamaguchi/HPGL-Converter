@@ -36,7 +36,21 @@ describe('createCoordinateTransform', () => {
     expect(transform.points()).toEqual({ p1: [1000, 500], p2: [4000, 2000] });
 
     transform.applyIR([]);
-    expect(transform.points()).toEqual({ p1: [1000, 500], p2: [4000, 2000] });
+    expect(transform.points()).toEqual({ p1: [0, 0], p2: [4000, 2000] });
+  });
+
+  it('updates and resets the explicit IP rectangle used as the IR basis', () => {
+    const transform = createCoordinateTransform();
+    transform.applyIP([0, 0, 4000, 2000]);
+    transform.applyIR([25, 25, 75, 75]);
+    transform.applyIP([100, 200, 2100, 1200]);
+    transform.applyIR([50, 50]);
+
+    expect(transform.points()).toEqual({ p1: [1100, 700], p2: [2100, 1200] });
+
+    transform.reset();
+    expect(() => transform.applyIR([])).toThrow(RangeError);
+    expect(transform.points()).toEqual({ p1: [0, 0], p2: null });
   });
 
   it('does not mutate the transform after invalid SC or IR', () => {

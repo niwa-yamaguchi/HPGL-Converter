@@ -102,15 +102,52 @@ describe('parseHpgl motion commands', () => {
     ]);
   });
 
-  it('flushes motion around an unsupported independent shape', () => {
-    const result = parseHpgl(ascii('PD40,0;CI40;PD80,0;'), context);
+  it.each([
+    'AA0,0,90',
+    'AA0,0,90,5',
+    'AR0,0,90',
+    'AR0,0,90,5',
+    'CI40',
+    'CI40,5',
+    'LBtext\x03',
+  ])('flushes motion around valid unsupported independent shape %s', command => {
+    const result = parseHpgl(ascii(`PD40,0;${command};PD80,0;`), context);
 
     expect(result.geometries).toEqual([
       expect.objectContaining({ type: 'line', points: [[0, 0], [1, 0]] }),
       expect.objectContaining({ type: 'line', points: [[1, 0], [2, 0]] }),
     ]);
     expect(result.diagnostics).toEqual([
-      expect.objectContaining({ severity: 'warning', command: 'CI' }),
+      expect.objectContaining({ severity: 'warning' }),
+    ]);
+  });
+
+  it.each([
+    'AA0,0',
+    'AA0,0,90,5,1',
+    'AR0,0',
+    'AR0,0,90,5,1',
+    'CI',
+    'CI40,0,1',
+  ])('keeps an open polyline across invalid independent shape %s', command => {
+    const result = parseHpgl(ascii(`PD40,0;${command};PD80,0;PU;`), context);
+
+    expect(result.geometries).toEqual([
+      expect.objectContaining({ type: 'polyline', points: [[0, 0], [1, 0], [2, 0]] }),
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ severity: 'error' }),
+    ]);
+  });
+
+  it('diagnoses parameterized DF without changing motion state', () => {
+    const result = parseHpgl(ascii('PD40,0;DF1;PD80,0;PU;'), context);
+
+    expect(result.geometries).toEqual([
+      expect.objectContaining({ type: 'polyline', points: [[0, 0], [1, 0], [2, 0]] }),
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ severity: 'error', command: 'DF' }),
     ]);
   });
 
