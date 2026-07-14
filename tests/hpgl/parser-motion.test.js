@@ -103,23 +103,22 @@ describe('parseHpgl motion commands', () => {
   });
 
   it.each([
-    'AA0,0,90',
-    'AA0,0,90,5',
-    'AR0,0,90',
-    'AR0,0,90,5',
-    'CI40',
-    'CI40,5',
-    'LBtext\x03',
-  ])('flushes motion around valid unsupported independent shape %s', command => {
+    ['AA0,0,90', 'arc'],
+    ['AA0,0,90,5', 'arc'],
+    ['AR40,0,90', 'arc'],
+    ['AR40,0,90,5', 'arc'],
+    ['CI40', 'circle'],
+    ['CI40,5', 'circle'],
+    ['LBtext\x03', 'text'],
+  ])('flushes motion around valid independent shape %s', (command, shapeType) => {
     const result = parseHpgl(ascii(`PD40,0;${command};PD80,0;`), context);
 
     expect(result.geometries).toEqual([
       expect.objectContaining({ type: 'line', points: [[0, 0], [1, 0]] }),
-      expect.objectContaining({ type: 'line', points: [[1, 0], [2, 0]] }),
+      expect.objectContaining({ type: shapeType }),
+      expect.objectContaining({ type: 'line' }),
     ]);
-    expect(result.diagnostics).toEqual([
-      expect.objectContaining({ severity: 'warning' }),
-    ]);
+    expect(result.diagnostics).toEqual([]);
   });
 
   it.each([
@@ -151,10 +150,10 @@ describe('parseHpgl motion commands', () => {
     ]);
   });
 
-  it('accepts ACI 0 and warns for unsupported commands while DF is a no-op', () => {
+  it('maps SP0 to ACI 1 and warns for unsupported commands while DF is a no-op', () => {
     const result = parseHpgl(ascii('SP0;DF;ZZ;PD40,0;PU;'), context);
 
-    expect(result.geometries[0]).toMatchObject({ color: 0 });
+    expect(result.geometries[0]).toMatchObject({ color: 1 });
     expect(result.diagnostics).toEqual([
       expect.objectContaining({ severity: 'warning', command: 'ZZ', offset: 7 }),
     ]);

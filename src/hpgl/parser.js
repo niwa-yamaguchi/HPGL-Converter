@@ -8,11 +8,14 @@ const PARAMETER_LIST = new RegExp(
 );
 const NUMBER = new RegExp(NUMBER_SOURCE, 'g');
 const MOTION_COMMANDS = new Set(['PA', 'PR', 'PU', 'PD']);
-const INDEPENDENT_SHAPE_COMMANDS = new Set(['AA', 'AR', 'CI', 'LB']);
+const NO_OP_COMMANDS = new Set(['CT', 'LT', 'VS', 'PG', 'RO', 'PS']);
+const FULL_CIRCLE_TOLERANCE = 1e-9;
+const DIAGNOSTIC_DETAIL_LIMIT = 100;
 
-function diagnostic(severity, token, message) {
+function diagnostic(severity, token, message, fileName) {
   return {
     severity,
+    fileName,
     command: token.code,
     offset: token.offset,
     message,
@@ -48,23 +51,36 @@ function validateNoParameters(values, command) {
   }
 }
 
-function validateIndependentShape(token) {
-  if (token.code === 'LB') {
-    return;
-  }
-
-  const values = parseNumbers(token.params);
-  const allowedLengths = token.code === 'CI' ? [1, 2] : [3, 4];
+function validateShapeValues(values, allowedLengths, command) {
   if (!allowedLengths.includes(values.length)) {
     throw new RangeError(
-      `${token.code} requires ${allowedLengths.join(' or ')} numeric values`,
+      `${command} requires ${allowedLengths.join(' or ')} numeric values`,
     );
   }
 }
 
+function isFullCircleSweep(sweep) {
+  const absoluteSweep = Math.abs(sweep);
+  const turns = Math.round(absoluteSweep / 360);
+  return turns > 0
+    && Math.abs(absoluteSweep - turns * 360) <= FULL_CIRCLE_TOLERANCE;
+}
+
+function normalizedTrig(value) {
+  if (Math.abs(value) <= Number.EPSILON * 8) {
+    return 0;
+  }
+  if (Math.abs(Math.abs(value) - 1) <= Number.EPSILON * 8) {
+    return Math.sign(value);
+  }
+  return value;
+}
+
 export function parseHpgl(data, context) {
   const tokenized = tokenizeHpgl(data);
-  const diagnostics = [...tokenized.diagnostics];
+  const diagnostics = [];
+  let errorCount = 0;
+  let warningCount = 0;
   const geometries = [];
   const state = {
     rawPosition: [0, 0],
@@ -76,6 +92,35 @@ export function parseHpgl(data, context) {
     polylineOffset: null,
     transform: createCoordinateTransform(),
   };
+
+  function addDiagnostic(item) {
+    if (item.severity === 'error') {
+      errorCount += 1;
+    } else {
+      warningCount += 1;
+    }
+    if (diagnostics.length < DIAGNOSTIC_DETAIL_LIMIT) {
+      diagnostics.push(item);
+      diagnostics.sort((first, second) => first.offset - second.offset);
+    } else if (item.offset < diagnostics[diagnostics.length - 1].offset) {
+      diagnostics.push(item);
+      diagnostics.sort((first, second) => first.offset - second.offset);
+      diagnostics.pop();
+    }
+  }
+
+  for (const item of tokenized.diagnostics) {
+    addDiagnostic({ ...item, fileName: context.fileName });
+  }
+
+  function shapeMetadata(token) {
+    return {
+      layer: context.layerName,
+      color: state.color,
+      fileName: context.fileName,
+      offset: token.offset,
+    };
+  }
 
   function flushPolyline() {
     if (state.polyline.length >= 2) {
@@ -145,6 +190,122 @@ export function parseHpgl(data, context) {
     move(destinations, token.offset);
   }
 
+  function handlePen(token) {
+    flushPolyline();
+    try {
+      const values = parseNumbers(token.params);
+      if (values.length !== 1) {
+        throw new RangeError('SP requires one pen number');
+      }
+      const pen = values[0];
+      if (!Number.isInteger(pen) || pen < 0 || pen > 255) {
+        throw new RangeError('SP pen number must be an integer from 0 through 255');
+      }
+      state.color = pen === 0 ? 1 : pen;
+    } catch (error) {
+      state.color = 7;
+      throw error;
+    }
+  }
+
+  function handleCircle(token) {
+    const values = parseNumbers(token.params);
+    validateShapeValues(values, [1, 2], 'CI');
+    if (values[0] <= 0) {
+      throw new RangeError('CI radius must be positive');
+    }
+    const radius = state.transform.radiusToMm(values[0]);
+
+    flushPolyline();
+    geometries.push({
+      type: 'circle',
+      center: [...state.positionMm],
+      radius,
+      ...shapeMetadata(token),
+    });
+  }
+
+  function handleArc(token) {
+    const values = parseNumbers(token.params);
+    validateShapeValues(values, [3, 4], token.code);
+    const sweep = values[2];
+    if (sweep === 0) {
+      throw new RangeError(`${token.code} sweep must be non-zero`);
+    }
+
+    const relative = token.code === 'AR';
+    const centerRaw = relative
+      ? [state.rawPosition[0] + values[0], state.rawPosition[1] + values[1]]
+      : [values[0], values[1]];
+    if (!centerRaw.every(Number.isFinite)) {
+      throw new RangeError(`${token.code} center must be finite`);
+    }
+    const startVector = [
+      state.rawPosition[0] - centerRaw[0],
+      state.rawPosition[1] - centerRaw[1],
+    ];
+    const rawRadius = Math.hypot(startVector[0], startVector[1]);
+    if (!Number.isFinite(rawRadius) || rawRadius === 0) {
+      throw new RangeError(`${token.code} radius must be non-zero`);
+    }
+
+    const centerMm = relative
+      ? (() => {
+        const delta = state.transform.deltaToMm(values[0], values[1]);
+        return [state.positionMm[0] + delta[0], state.positionMm[1] + delta[1]];
+      })()
+      : state.transform.toMm(centerRaw[0], centerRaw[1]);
+    const radius = state.transform.radiusToMm(rawRadius);
+    const startAngle = Math.atan2(startVector[1], startVector[0]) * (180 / Math.PI);
+    const endAngle = startAngle + sweep;
+    const fullCircle = isFullCircleSweep(sweep);
+    let endpointRaw = [...state.rawPosition];
+    let endpointMm = [...state.positionMm];
+
+    if (!fullCircle) {
+      const radians = sweep * (Math.PI / 180);
+      const cosine = normalizedTrig(Math.cos(radians));
+      const sine = normalizedTrig(Math.sin(radians));
+      const endVector = [
+        startVector[0] * cosine - startVector[1] * sine,
+        startVector[0] * sine + startVector[1] * cosine,
+      ];
+      endpointRaw = [centerRaw[0] + endVector[0], centerRaw[1] + endVector[1]];
+      const endpointDelta = state.transform.deltaToMm(endVector[0], endVector[1]);
+      endpointMm = [centerMm[0] + endpointDelta[0], centerMm[1] + endpointDelta[1]];
+    }
+
+    flushPolyline();
+    if (state.penDown) {
+      geometries.push(fullCircle
+        ? {
+          type: 'circle', center: centerMm, radius, ...shapeMetadata(token),
+        }
+        : {
+          type: 'arc',
+          center: centerMm,
+          radius,
+          startAngle,
+          endAngle,
+          ...shapeMetadata(token),
+        });
+    }
+    state.rawPosition = endpointRaw;
+    state.positionMm = endpointMm;
+  }
+
+  function handleLabel(token) {
+    flushPolyline();
+    geometries.push({
+      type: 'text',
+      point: [...state.positionMm],
+      text: token.label,
+      height: 5,
+      rotation: 0,
+      ...shapeMetadata(token),
+    });
+  }
+
   for (const token of tokenized.tokens) {
     try {
       if (MOTION_COMMANDS.has(token.code)) {
@@ -161,20 +322,20 @@ export function parseHpgl(data, context) {
         continue;
       }
       if (token.code === 'SC') {
-        state.transform.applySC(parseNumbers(token.params));
+        const values = parseNumbers(token.params);
+        state.transform.applySC(values.length > 4 ? values.slice(0, 4) : values);
+        if (values.length > 4) {
+          addDiagnostic(diagnostic(
+            'warning',
+            token,
+            'Optional SC parameters are ignored',
+            context.fileName,
+          ));
+        }
         continue;
       }
       if (token.code === 'SP') {
-        const values = parseNumbers(token.params);
-        if (values.length > 1) {
-          throw new RangeError('SP accepts at most one pen number');
-        }
-        const color = values[0] ?? 0;
-        if (!Number.isInteger(color) || color < 0 || color > 255) {
-          throw new RangeError('SP pen number must be an integer from 0 through 255');
-        }
-        flushPolyline();
-        state.color = color;
+        handlePen(token);
         continue;
       }
       if (token.code === 'IN') {
@@ -193,17 +354,30 @@ export function parseHpgl(data, context) {
         validateNoParameters(parseNumbers(token.params), 'DF');
         continue;
       }
-
-      if (INDEPENDENT_SHAPE_COMMANDS.has(token.code)) {
-        validateIndependentShape(token);
-        flushPolyline();
+      if (token.code === 'CI') {
+        handleCircle(token);
+        continue;
       }
-      diagnostics.push(diagnostic('warning', token, 'Unsupported HPGL command'));
+      if (token.code === 'AA' || token.code === 'AR') {
+        handleArc(token);
+        continue;
+      }
+      if (token.code === 'LB') {
+        handleLabel(token);
+        continue;
+      }
+      if (NO_OP_COMMANDS.has(token.code)) {
+        continue;
+      }
+      addDiagnostic(diagnostic(
+        'warning', token, 'Unsupported HPGL command', context.fileName,
+      ));
     } catch (error) {
-      diagnostics.push(diagnostic(
+      addDiagnostic(diagnostic(
         'error',
         token,
         error instanceof Error ? error.message : 'Invalid HPGL command',
+        context.fileName,
       ));
     }
   }
@@ -214,8 +388,8 @@ export function parseHpgl(data, context) {
     diagnostics,
     summary: {
       geometryCount: geometries.length,
-      errorCount: diagnostics.filter(item => item.severity === 'error').length,
-      warningCount: diagnostics.filter(item => item.severity === 'warning').length,
+      errorCount,
+      warningCount,
     },
   };
 }
