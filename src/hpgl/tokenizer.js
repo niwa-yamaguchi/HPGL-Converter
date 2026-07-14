@@ -59,6 +59,38 @@ function readLabel(data, paramsStart, decoder) {
   };
 }
 
+function readOrdinaryParams(data, cursor) {
+  const segments = [];
+  let segmentStart = cursor;
+
+  while (cursor < data.length && data[cursor] !== SEMICOLON) {
+    if (data[cursor] === ESC && data[cursor + 1] === DOT) {
+      segments.push(data.subarray(segmentStart, cursor));
+      cursor = skipEscDotSequence(data, cursor);
+      segmentStart = cursor;
+      continue;
+    }
+    if (isAlpha(data[cursor]) && isAlpha(data[cursor + 1])) {
+      break;
+    }
+    cursor += 1;
+  }
+
+  if (segments.length === 0) {
+    return { params: data.slice(segmentStart, cursor), nextCursor: cursor };
+  }
+
+  segments.push(data.subarray(segmentStart, cursor));
+  const length = segments.reduce((total, segment) => total + segment.length, 0);
+  const params = new Uint8Array(length);
+  let outputCursor = 0;
+  for (const segment of segments) {
+    params.set(segment, outputCursor);
+    outputCursor += segment.length;
+  }
+  return { params, nextCursor: cursor };
+}
+
 export function tokenizeHpgl(data) {
   const tokens = [];
   const diagnostics = [];
@@ -97,13 +129,9 @@ export function tokenizeHpgl(data) {
       continue;
     }
 
-    while (cursor < data.length && data[cursor] !== SEMICOLON) {
-      if (isAlpha(data[cursor]) && isAlpha(data[cursor + 1])) {
-        break;
-      }
-      cursor += 1;
-    }
-    tokens.push({ code, params: data.slice(paramsStart, cursor), offset });
+    const ordinary = readOrdinaryParams(data, paramsStart);
+    tokens.push({ code, params: ordinary.params, offset });
+    cursor = ordinary.nextCursor;
   }
 
   return { tokens, diagnostics };

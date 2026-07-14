@@ -18,12 +18,27 @@ describe('tokenizeHpgl', () => {
     expect(result.tokens).toMatchObject([{ code: 'PA', offset: 12 }]);
   });
 
+  it('strips ESC sequences inside ordinary params without losing original offsets', () => {
+    const result = tokenizeHpgl(ascii('PA0,0\x1b.Eignored:PR40,0;'));
+
+    expect(result.tokens.map(token => token.code)).toEqual(['PA', 'PR']);
+    expect(decode(result.tokens[0].params)).toBe('0,0');
+    expect(result.tokens[1]).toMatchObject({ code: 'PR', offset: 16 });
+    expect(decode(result.tokens[1].params)).toBe('40,0');
+  });
+
   it('reads LB through ETX even when the label contains a semicolon', () => {
     const result = tokenizeHpgl(ascii('LBABC;DEF\x03PA0,0;'));
 
     expect(result.tokens[0]).toMatchObject({ code: 'LB', label: 'ABC;DEF' });
     expect(decode(result.tokens[0].params)).toBe('ABC;DEF');
     expect(result.tokens[1].code).toBe('PA');
+  });
+
+  it('replaces malformed UTF-8 bytes in LB labels', () => {
+    const result = tokenizeHpgl(new Uint8Array([0x4c, 0x42, 0xc3, 0x28, 0x03]));
+
+    expect(result.tokens[0].label).toBe('\ufffd(');
   });
 
   it('uppercases lowercase command codes', () => {
