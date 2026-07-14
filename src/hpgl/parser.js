@@ -12,15 +12,21 @@ const NO_OP_COMMANDS = new Set(['CT', 'LT', 'VS', 'PG', 'RO', 'PS']);
 const FULL_CIRCLE_TOLERANCE = 1e-9;
 const DIAGNOSTIC_DETAIL_LIMIT = 100;
 
-function diagnostic(severity, token, message, fileName) {
+function diagnostic(
+  severity,
+  token,
+  message,
+  fileName,
+  { skippedCommands = 1, skippedShapes = 0 } = {},
+) {
   return {
     severity,
     fileName,
     command: token.code,
     offset: token.offset,
     message,
-    skippedCommands: 1,
-    skippedShapes: 0,
+    skippedCommands,
+    skippedShapes,
   };
 }
 
@@ -330,6 +336,7 @@ export function parseHpgl(data, context) {
             token,
             'Optional SC parameters are ignored',
             context.fileName,
+            { skippedCommands: 0 },
           ));
         }
         continue;

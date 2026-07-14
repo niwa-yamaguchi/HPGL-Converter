@@ -84,6 +84,20 @@ describe('parseHpgl recovery and diagnostics', () => {
     expect(result.summary).toEqual({ geometryCount: 1, errorCount: 0, warningCount: 1 });
   });
 
+  it('reports ignored SC options without marking the applied command as skipped', () => {
+    const result = parseHpgl(ascii('SC0,100,0,100,999;'), context);
+
+    expect(result.diagnostics).toEqual([{
+      severity: 'warning',
+      fileName: 'a.hpgl',
+      command: 'SC',
+      offset: 0,
+      message: 'Optional SC parameters are ignored',
+      skippedCommands: 0,
+      skippedShapes: 0,
+    }]);
+  });
+
   it('keeps transform state after malformed SC and accepts DF as a validated no-op', () => {
     const result = parseHpgl(
       ascii('PA40,40;SC0,100,@,100;DF;PD80,40;PU;ZZ1;CT0;'),
