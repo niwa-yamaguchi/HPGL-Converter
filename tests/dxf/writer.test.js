@@ -48,6 +48,20 @@ describe('writeDxf structure', () => {
     expect(tables.split(`2\n${escapedLayer}\n`)).toHaveLength(2);
     expect(section(text, 'ENTITIES')).toContain(`8\n${escapedLayer}\n`);
   });
+
+  it('deduplicates layers by their final escaped group 2 value', () => {
+    const text = joined({
+      layers: ['control\nname', 'control\rname', 'control name'],
+      geometries: [
+        { type: 'line', layer: 'control\nname', color: 2, points: [[0, 0], [1, 1]] },
+      ],
+    });
+    const tables = section(text, 'TABLES');
+
+    expect(tables.match(/0\nLAYER\n/g)).toHaveLength(2);
+    expect(tables.split('0\nLAYER\n2\ncontrol name\n')).toHaveLength(2);
+    expect(section(text, 'ENTITIES')).toContain('8\ncontrol name\n');
+  });
 });
 
 describe('writeDxf entities', () => {

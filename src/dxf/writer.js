@@ -189,9 +189,10 @@ function uniqueLayers(layers) {
     if (typeof layer !== 'string') {
       throw new TypeError('Every layer must be a string');
     }
-    if (!seen.has(layer)) {
-      seen.add(layer);
-      result.push(layer);
+    const escapedLayer = escapeDxfText(layer);
+    if (!seen.has(escapedLayer)) {
+      seen.add(escapedLayer);
+      result.push(escapedLayer);
     }
   }
   return result;
@@ -217,7 +218,7 @@ function writeTables(chunks, layers) {
   ]);
   for (const layer of layers) {
     pushPairs(chunks, [
-      [0, 'LAYER'], [2, escapeDxfText(layer)], [70, 0],
+      [0, 'LAYER'], [2, layer], [70, 0],
       [62, 7], [6, 'CONTINUOUS'],
     ]);
   }

@@ -8,6 +8,8 @@ export function escapeDxfText(value) {
     const codeUnit = value.charCodeAt(index);
     if (codeUnit < 0x20 || codeUnit === 0x7f) {
       escaped += ' ';
+    } else if (codeUnit === 0x5c) {
+      escaped += '\\U+005C';
     } else if (codeUnit <= 0x7e) {
       escaped += value[index];
     } else {
