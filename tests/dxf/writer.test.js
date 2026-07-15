@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { writeDxf } from '../../src/dxf/writer.js';
+import { parseDxfTags, recordValues, records, sectionTags } from './dxf-tags.js';
 
 function joined(input) {
   return writeDxf(input).join('');
@@ -23,13 +24,52 @@ describe('writeDxf structure', () => {
     expect(text).toContain('9\n$ACADVER\n1\nAC1015\n');
     expect(text).toContain('9\n$INSUNITS\n70\n4\n');
     expect(text).toContain('0\nTABLE\n2\nLTYPE\n');
-    expect(text).toContain('0\nLTYPE\n2\nCONTINUOUS\n');
     expect(text).toContain('0\nTABLE\n2\nLAYER\n');
-    expect(text).toContain('0\nLAYER\n2\n0\n70\n0\n62\n7\n6\nCONTINUOUS\n');
-    expect(section(text, 'BLOCKS')).toBe('');
+    const tableRecords = records(sectionTags(parseDxfTags(text), 'TABLES'));
+    expect(tableRecords.some(record => (
+      record.type === 'LTYPE' && recordValues(record, 2)[0] === 'CONTINUOUS'
+    ))).toBe(true);
+    const layer0 = tableRecords.find(record => (
+      record.type === 'LAYER' && recordValues(record, 2)[0] === '0'
+    ));
+    expect(recordValues(layer0, 70)).toEqual(['0']);
+    expect(recordValues(layer0, 62)).toEqual(['7']);
+    expect(recordValues(layer0, 6)).toEqual(['CONTINUOUS']);
     expect(section(text, 'ENTITIES')).toBe('');
-    expect(section(text, 'OBJECTS')).toBe('');
     expect(text.endsWith('0\nEOF\n')).toBe(true);
+  });
+
+  it('writes the required R2000 tables, spaces, viewport, and dictionaries', () => {
+    const text = joined({ layers: [], geometries: [] });
+    const tags = parseDxfTags(text);
+    const sectionNames = [];
+    for (let index = 0; index + 1 < tags.length; index += 1) {
+      if (tags[index].code === 0 && tags[index].value === 'SECTION'
+        && tags[index + 1].code === 2) {
+        sectionNames.push(tags[index + 1].value);
+      }
+    }
+    expect(sectionNames).toEqual(['HEADER', 'CLASSES', 'TABLES', 'BLOCKS', 'ENTITIES', 'OBJECTS']);
+
+    const tableRecords = records(sectionTags(tags, 'TABLES'));
+    const tableNames = tableRecords
+      .filter(record => record.type === 'TABLE')
+      .map(record => recordValues(record, 2)[0]);
+    expect(tableNames).toEqual([
+      'VPORT', 'LTYPE', 'LAYER', 'STYLE', 'VIEW', 'UCS', 'APPID', 'DIMSTYLE', 'BLOCK_RECORD',
+    ]);
+    expect(tableRecords.some(record => (
+      record.type === 'VPORT' && recordValues(record, 2)[0] === '*ACTIVE'
+    ))).toBe(true);
+    expect(tableRecords.filter(record => record.type === 'BLOCK_RECORD')
+      .map(record => recordValues(record, 2)[0])).toEqual(['*Model_Space', '*Paper_Space']);
+    expect(tableRecords.filter(record => record.type === 'DIMSTYLE')).toEqual([]);
+
+    const blockRecords = records(sectionTags(tags, 'BLOCKS'));
+    expect(blockRecords.map(record => record.type)).toEqual(['BLOCK', 'ENDBLK', 'BLOCK', 'ENDBLK']);
+    expect(records(sectionTags(tags, 'ENTITIES'))).toEqual([]);
+    expect(records(sectionTags(tags, 'OBJECTS')).map(record => record.type))
+      .toEqual(['DICTIONARY', 'DICTIONARY']);
   });
 
   it('registers layer 0 and unique input layers in order and escapes Unicode', () => {
@@ -57,9 +97,12 @@ describe('writeDxf structure', () => {
       ],
     });
     const tables = section(text, 'TABLES');
+    const layerNames = records(sectionTags(parseDxfTags(text), 'TABLES'))
+      .filter(record => record.type === 'LAYER')
+      .map(record => recordValues(record, 2)[0]);
 
     expect(tables.match(/0\nLAYER\n/g)).toHaveLength(2);
-    expect(tables.split('0\nLAYER\n2\ncontrol name\n')).toHaveLength(2);
+    expect(layerNames).toEqual(['0', 'control name']);
     expect(section(text, 'ENTITIES')).toContain('8\ncontrol name\n');
   });
 });

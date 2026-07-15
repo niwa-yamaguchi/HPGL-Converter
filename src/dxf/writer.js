@@ -1,6 +1,18 @@
 import { escapeDxfText } from './escape.js';
+import { createHandleAllocator } from './handles.js';
 
 const GEOMETRY_TYPES = new Set(['line', 'polyline', 'circle', 'arc', 'text']);
+const TABLE_DEFINITIONS = [
+  ['VPORT', 'AcDbViewportTableRecord'],
+  ['LTYPE', 'AcDbLinetypeTableRecord'],
+  ['LAYER', 'AcDbLayerTableRecord'],
+  ['STYLE', 'AcDbTextStyleTableRecord'],
+  ['VIEW', 'AcDbViewTableRecord'],
+  ['UCS', 'AcDbUCSTableRecord'],
+  ['APPID', 'AcDbRegAppTableRecord'],
+  ['DIMSTYLE', 'AcDbDimStyleTableRecord'],
+  ['BLOCK_RECORD', 'AcDbBlockTableRecord'],
+];
 
 function pair(code, value) {
   return `${code}\n${value}\n`;
@@ -19,6 +31,35 @@ function pushSectionStart(chunks, name) {
 function pushEmptySection(chunks, name) {
   pushSectionStart(chunks, name);
   chunks.push(pair(0, 'ENDSEC'));
+}
+
+function allocateDocumentGraph(layers, geometryCount) {
+  const allocator = createHandleAllocator();
+  const tables = Object.fromEntries(TABLE_DEFINITIONS.map(([name]) => [name, allocator.next()]));
+  const records = {
+    activeViewport: allocator.next(),
+    byBlock: allocator.next(),
+    byLayer: allocator.next(),
+    continuous: allocator.next(),
+    layer0: allocator.next(),
+    layers: layers.slice(1).map(() => allocator.next()),
+    standardStyle: allocator.next(),
+    acadApp: allocator.next(),
+    modelSpace: allocator.next(),
+    paperSpace: allocator.next(),
+  };
+  const blocks = {
+    modelBegin: allocator.next(),
+    modelEnd: allocator.next(),
+    paperBegin: allocator.next(),
+    paperEnd: allocator.next(),
+  };
+  const objects = {
+    rootDictionary: allocator.next(),
+    acadGroup: allocator.next(),
+  };
+  const entities = Array.from({ length: geometryCount }, () => allocator.next());
+  return { tables, records, blocks, objects, entities, handseed: allocator.peek() };
 }
 
 function validatePoint(point, label) {
@@ -198,31 +239,164 @@ function uniqueLayers(layers) {
   return result;
 }
 
-function writeHeader(chunks) {
+function writeHeader(chunks, graph) {
   pushSectionStart(chunks, 'HEADER');
   pushPairs(chunks, [
     [9, '$ACADVER'], [1, 'AC1015'],
+    [9, '$HANDSEED'], [5, graph.handseed],
     [9, '$INSUNITS'], [70, 4],
     [0, 'ENDSEC'],
   ]);
 }
 
-function writeTables(chunks, layers) {
-  pushSectionStart(chunks, 'TABLES');
+function writeTableStart(chunks, graph, name, size) {
   pushPairs(chunks, [
-    [0, 'TABLE'], [2, 'LTYPE'], [70, 1],
-    [0, 'LTYPE'], [2, 'CONTINUOUS'], [70, 0], [3, 'Solid line'],
-    [72, 65], [73, 0], [40, 0],
-    [0, 'ENDTAB'],
-    [0, 'TABLE'], [2, 'LAYER'], [70, layers.length],
+    [0, 'TABLE'], [2, name], [5, graph.tables[name]], [330, 0],
+    [100, 'AcDbSymbolTable'], [70, size],
   ]);
+  if (name === 'DIMSTYLE') {
+    pushPairs(chunks, [[100, 'AcDbDimStyleTable'], [71, 0]]);
+  }
+}
+
+function writeTableEnd(chunks) {
+  chunks.push(pair(0, 'ENDTAB'));
+}
+
+function writeTableRecord(chunks, graph, tableName, type, handle, values) {
+  const definition = TABLE_DEFINITIONS.find(([name]) => name === tableName);
+  pushPairs(chunks, [
+    [0, type], [5, handle], [330, graph.tables[tableName]],
+    [100, 'AcDbSymbolTableRecord'], [100, definition[1]],
+    ...values,
+  ]);
+}
+
+function writeViewportTable(chunks, graph) {
+  writeTableStart(chunks, graph, 'VPORT', 1);
+  writeTableRecord(chunks, graph, 'VPORT', 'VPORT', graph.records.activeViewport, [
+    [2, '*ACTIVE'], [70, 0],
+    [10, 0], [20, 0], [11, 1], [21, 1],
+    [12, 0], [22, 0], [13, 0], [23, 0],
+    [14, 10], [24, 10], [15, 10], [25, 10],
+    [16, 0], [26, 0], [36, 1],
+    [17, 0], [27, 0], [37, 0],
+    [40, 100], [41, 1], [42, 50], [43, 0], [44, 0],
+    [50, 0], [51, 0], [71, 0], [72, 100],
+    [73, 1], [74, 3], [75, 0], [76, 0], [77, 0], [78, 0],
+  ]);
+  writeTableEnd(chunks);
+}
+
+function writeLinetypeTable(chunks, graph) {
+  writeTableStart(chunks, graph, 'LTYPE', 3);
+  const linetypes = [
+    [graph.records.byBlock, 'ByBlock', ''],
+    [graph.records.byLayer, 'ByLayer', ''],
+    [graph.records.continuous, 'CONTINUOUS', 'Solid line'],
+  ];
+  for (const [handle, name, description] of linetypes) {
+    writeTableRecord(chunks, graph, 'LTYPE', 'LTYPE', handle, [
+      [2, name], [70, 0], [3, description], [72, 65], [73, 0], [40, 0],
+    ]);
+  }
+  writeTableEnd(chunks);
+}
+
+function writeLayerTable(chunks, layers, graph) {
+  writeTableStart(chunks, graph, 'LAYER', layers.length);
   for (const layer of layers) {
-    pushPairs(chunks, [
-      [0, 'LAYER'], [2, layer], [70, 0],
+    const index = layers.indexOf(layer);
+    const handle = index === 0 ? graph.records.layer0 : graph.records.layers[index - 1];
+    writeTableRecord(chunks, graph, 'LAYER', 'LAYER', handle, [
+      [2, layer], [70, 0],
       [62, 7], [6, 'CONTINUOUS'],
     ]);
   }
-  pushPairs(chunks, [[0, 'ENDTAB'], [0, 'ENDSEC']]);
+  writeTableEnd(chunks);
+}
+
+function writeStyleTable(chunks, graph) {
+  writeTableStart(chunks, graph, 'STYLE', 1);
+  writeTableRecord(chunks, graph, 'STYLE', 'STYLE', graph.records.standardStyle, [
+    [2, 'STANDARD'], [70, 0], [40, 0], [41, 1], [50, 0],
+    [71, 0], [42, 2.5], [3, 'txt'], [4, ''],
+  ]);
+  writeTableEnd(chunks);
+}
+
+function writeEmptyTable(chunks, graph, name) {
+  writeTableStart(chunks, graph, name, 0);
+  writeTableEnd(chunks);
+}
+
+function writeAppIdTable(chunks, graph) {
+  writeTableStart(chunks, graph, 'APPID', 1);
+  writeTableRecord(chunks, graph, 'APPID', 'APPID', graph.records.acadApp, [
+    [2, 'ACAD'], [70, 0],
+  ]);
+  writeTableEnd(chunks);
+}
+
+function writeBlockRecordTable(chunks, graph) {
+  writeTableStart(chunks, graph, 'BLOCK_RECORD', 2);
+  writeTableRecord(chunks, graph, 'BLOCK_RECORD', 'BLOCK_RECORD', graph.records.modelSpace, [
+    [2, '*Model_Space'], [70, 0],
+  ]);
+  writeTableRecord(chunks, graph, 'BLOCK_RECORD', 'BLOCK_RECORD', graph.records.paperSpace, [
+    [2, '*Paper_Space'], [70, 0],
+  ]);
+  writeTableEnd(chunks);
+}
+
+function writeTables(chunks, layers, graph) {
+  pushSectionStart(chunks, 'TABLES');
+  writeViewportTable(chunks, graph);
+  writeLinetypeTable(chunks, graph);
+  writeLayerTable(chunks, layers, graph);
+  writeStyleTable(chunks, graph);
+  writeEmptyTable(chunks, graph, 'VIEW');
+  writeEmptyTable(chunks, graph, 'UCS');
+  writeAppIdTable(chunks, graph);
+  writeEmptyTable(chunks, graph, 'DIMSTYLE');
+  writeBlockRecordTable(chunks, graph);
+  chunks.push(pair(0, 'ENDSEC'));
+}
+
+function writeBlock(chunks, name, owner, beginHandle, endHandle) {
+  pushPairs(chunks, [
+    [0, 'BLOCK'], [5, beginHandle], [330, owner],
+    [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockBegin'],
+    [2, name], [70, 0], [10, 0], [20, 0], [30, 0], [3, name], [1, ''],
+    [0, 'ENDBLK'], [5, endHandle], [330, owner],
+    [100, 'AcDbEntity'], [8, '0'], [100, 'AcDbBlockEnd'],
+  ]);
+}
+
+function writeBlocks(chunks, graph) {
+  pushSectionStart(chunks, 'BLOCKS');
+  writeBlock(
+    chunks, '*Model_Space', graph.records.modelSpace,
+    graph.blocks.modelBegin, graph.blocks.modelEnd,
+  );
+  writeBlock(
+    chunks, '*Paper_Space', graph.records.paperSpace,
+    graph.blocks.paperBegin, graph.blocks.paperEnd,
+  );
+  chunks.push(pair(0, 'ENDSEC'));
+}
+
+function writeObjects(chunks, graph) {
+  pushSectionStart(chunks, 'OBJECTS');
+  pushPairs(chunks, [
+    [0, 'DICTIONARY'], [5, graph.objects.rootDictionary], [330, 0],
+    [100, 'AcDbDictionary'], [280, 0], [281, 1],
+    [3, 'ACAD_GROUP'], [350, graph.objects.acadGroup],
+    [0, 'DICTIONARY'], [5, graph.objects.acadGroup],
+    [330, graph.objects.rootDictionary], [100, 'AcDbDictionary'],
+    [280, 0], [281, 1],
+    [0, 'ENDSEC'],
+  ]);
 }
 
 export function writeDxf(input) {
@@ -237,16 +411,18 @@ export function writeDxf(input) {
   }
 
   const layers = uniqueLayers(input.layers);
+  const graph = allocateDocumentGraph(layers, input.geometries.length);
   const chunks = [];
-  writeHeader(chunks);
-  writeTables(chunks, layers);
-  pushEmptySection(chunks, 'BLOCKS');
+  writeHeader(chunks, graph);
+  pushEmptySection(chunks, 'CLASSES');
+  writeTables(chunks, layers, graph);
+  writeBlocks(chunks, graph);
   pushSectionStart(chunks, 'ENTITIES');
   for (const geometry of input.geometries) {
     pushPairs(chunks, geometryPairs(geometry));
   }
   chunks.push(pair(0, 'ENDSEC'));
-  pushEmptySection(chunks, 'OBJECTS');
+  writeObjects(chunks, graph);
   chunks.push(pair(0, 'EOF'));
   return chunks;
 }
