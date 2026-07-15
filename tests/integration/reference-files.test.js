@@ -51,10 +51,7 @@ function normalizedAngle(angle) {
 }
 
 function canonicalGeometry(geometry) {
-  const common = {
-    layer: escapeDxfText(geometry.layer),
-    color: geometry.color,
-  };
+  const common = { layer: escapeDxfText(geometry.layer) };
   switch (geometry.type) {
     case 'line':
       return { type: 'LINE', ...common, values: [...geometry.points[0], 0, ...geometry.points[1], 0] };
@@ -88,10 +85,7 @@ function canonicalGeometry(geometry) {
 }
 
 function canonicalEntity(record) {
-  const common = {
-    layer: recordValues(record, 8)[0],
-    color: Number(recordValues(record, 62)[0]),
-  };
+  const common = { layer: recordValues(record, 8)[0] };
   const numbers = code => recordValues(record, code).map(Number);
   switch (record.type) {
     case 'LINE':
@@ -141,7 +135,7 @@ function canonicalEntity(record) {
 
 const missingReferences = await referenceAvailability();
 const testName = missingReferences.length === 0
-  ? 'converts all eight reference files into a finite, colored, layered DXF'
+  ? 'converts all eight reference files into a finite, ByLayer, layered DXF'
   : `skips reference integration because these user files are unavailable: ${missingReferences.join(', ')}`;
 
 it('ignores local build artifacts while retaining the worktree rules', async () => {
@@ -183,7 +177,7 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
   const tableRecords = records(sectionTags(tags, 'TABLES'));
   const pairs = entityPairs(dxf);
   const entityTypes = pairs.filter(pair => pair.code === 0).map(pair => pair.value);
-  const entityColors = pairs.filter(pair => pair.code === 62).map(pair => Number(pair.value));
+  const entityColorTags = pairs.filter(pair => pair.code === 62);
   const xCoordinates = pairs
     .filter(pair => pair.code >= 10 && pair.code <= 18)
     .map(pair => Number(pair.value));
@@ -191,11 +185,10 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
     .filter(pair => pair.code >= 20 && pair.code <= 28)
     .map(pair => Number(pair.value));
   const numericEntityValues = pairs
-    .filter(pair => (pair.code >= 10 && pair.code <= 59) || pair.code === 62)
+    .filter(pair => pair.code >= 10 && pair.code <= 59)
     .map(pair => Number(pair.value));
 
   expect(result.totals.fileCount).toBe(8);
-  expect(result.totals.geometryCount).toBe(53842);
   expect(result.totals.errorCount).toBe(0);
   expect(result.totals.warningCount).toBe(0);
   expect(result.files).toHaveLength(8);
@@ -213,10 +206,9 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
   expect(entityRecords.every(entity => recordValues(entity, 330).length === 1)).toBe(true);
   expect(entityRecords.every(entity => recordValues(entity, 100).includes('AcDbEntity')))
     .toBe(true);
+  expect(entityColorTags).toEqual([]);
+  expect(expectedGeometries.every(geometry => !Object.hasOwn(geometry, 'color'))).toBe(true);
   expect(entityRecords.map(canonicalEntity)).toEqual(expectedGeometries.map(canonicalGeometry));
-  expect(entityColors).toEqual(expectedGeometries.map(geometry => geometry.color));
-  expect(entityColors.every(color => Number.isInteger(color) && color >= 1 && color <= 255))
-    .toBe(true);
 
   const dxfLayerNames = tableRecords
     .filter(record => record.type === 'LAYER')

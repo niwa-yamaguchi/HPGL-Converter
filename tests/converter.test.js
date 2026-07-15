@@ -55,7 +55,7 @@ describe('convertInputs', () => {
     const entityRecords = records(sectionTags(parseDxfTags(dxf), 'ENTITIES'));
     expect(entityRecords.map(record => record.type)).toEqual(['LINE', 'LINE']);
     expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(['first', 'second']);
-    expect(entityRecords.map(record => recordValues(record, 62)[0])).toEqual(['2', '3']);
+    expect(entityRecords.every(record => recordValues(record, 62).length === 0)).toBe(true);
     expect(entityRecords.map(record => ({
       start: [recordValues(record, 10)[0], recordValues(record, 20)[0]],
       end: [recordValues(record, 11)[0], recordValues(record, 21)[0]],
@@ -85,7 +85,12 @@ describe('convertInputs', () => {
     expect(result.totals).toEqual({
       fileCount: 1, geometryCount: 1, errorCount: 1, warningCount: 0,
     });
-    expect(section(decode(result.buffer), 'ENTITIES')).toContain('62\n4\n');
+    const entityRecords = records(sectionTags(
+      parseDxfTags(decode(result.buffer)),
+      'ENTITIES',
+    ));
+    expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(['damaged']);
+    expect(entityRecords.every(record => recordValues(record, 62).length === 0)).toBe(true);
   });
 
   it.each([
@@ -121,9 +126,13 @@ describe('convertInputs', () => {
     expect(result.totals).toEqual({
       fileCount: 2, geometryCount: 2, errorCount: 1, warningCount: 0,
     });
-    const entities = section(decode(result.buffer), 'ENTITIES');
-    expect(entities).toContain('8\ndamaged\n62\n6\n');
-    expect(entities).toContain('8\ngood\n62\n5\n');
+    const entityRecords = records(sectionTags(
+      parseDxfTags(decode(result.buffer)),
+      'ENTITIES',
+    ));
+    expect(entityRecords.map(record => recordValues(record, 8)[0]))
+      .toEqual(['damaged', 'good']);
+    expect(entityRecords.every(record => recordValues(record, 62).length === 0)).toBe(true);
   });
 
   it('produces a complete decodable DXF for no inputs', async () => {
@@ -169,7 +178,12 @@ describe('convertInputs', () => {
       expect(result.totals).toEqual({
         fileCount: 2, geometryCount: 1, errorCount: 1, warningCount: 0,
       });
-      expect(section(decode(result.buffer), 'ENTITIES')).toContain('8\ngood\n62\n5\n');
+      const entityRecords = records(sectionTags(
+        parseDxfTags(decode(result.buffer)),
+        'ENTITIES',
+      ));
+      expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(['good']);
+      expect(entityRecords.every(record => recordValues(record, 62).length === 0)).toBe(true);
     } finally {
       parse.mockRestore();
     }
