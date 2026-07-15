@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as parserModule from '../src/hpgl/parser.js';
 import { convertInputs } from '../src/converter.js';
+import { parseDxfTags, recordValues, records, sectionTags } from './dxf/dxf-tags.js';
 
 const ascii = text => new TextEncoder().encode(text);
 const decode = buffer => new TextDecoder().decode(buffer);
@@ -50,12 +51,18 @@ describe('convertInputs', () => {
     expect(result.buffer).toBeInstanceOf(ArrayBuffer);
     const dxf = decode(result.buffer);
     const tables = section(dxf, 'TABLES');
-    const entities = section(dxf, 'ENTITIES');
     expect(tables.indexOf('2\nfirst\n')).toBeLessThan(tables.indexOf('2\nsecond\n'));
-    expect(entities).toBe(
-      '0\nLINE\n8\nfirst\n62\n2\n10\n0\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n'
-      + '0\nLINE\n8\nsecond\n62\n3\n10\n0\n20\n0\n30\n0\n11\n0\n21\n1\n31\n0\n',
-    );
+    const entityRecords = records(sectionTags(parseDxfTags(dxf), 'ENTITIES'));
+    expect(entityRecords.map(record => record.type)).toEqual(['LINE', 'LINE']);
+    expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(['first', 'second']);
+    expect(entityRecords.map(record => recordValues(record, 62)[0])).toEqual(['2', '3']);
+    expect(entityRecords.map(record => ({
+      start: [recordValues(record, 10)[0], recordValues(record, 20)[0]],
+      end: [recordValues(record, 11)[0], recordValues(record, 21)[0]],
+    }))).toEqual([
+      { start: ['0', '0'], end: ['1', '0'] },
+      { start: ['0', '0'], end: ['0', '1'] },
+    ]);
   });
 
   it('keeps valid geometry and reports malformed HPGL commands', async () => {
