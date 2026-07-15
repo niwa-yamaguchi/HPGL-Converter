@@ -139,7 +139,7 @@ describe('writeDxf structure', () => {
     {
       layers: ['a'],
       geometries: [
-        { type: 'line', layer: 'a', color: 1, points: [[0, 0], [1, 1]] },
+        { type: 'line', layer: 'a', points: [[0, 0], [1, 1]] },
       ],
     },
   ])('writes a resolvable handle graph for %#', input => {
@@ -176,7 +176,7 @@ describe('writeDxf structure', () => {
     const text = joined({
       layers: ['部品', 'outline', '部品', '0'],
       geometries: [
-        { type: 'line', layer: '部品', color: 2, points: [[0, 0], [1, 1]] },
+        { type: 'line', layer: '部品', points: [[0, 0], [1, 1]] },
       ],
     });
     const tables = section(text, 'TABLES');
@@ -193,7 +193,7 @@ describe('writeDxf structure', () => {
     const text = joined({
       layers: ['control\nname', 'control\rname', 'control name'],
       geometries: [
-        { type: 'line', layer: 'control\nname', color: 2, points: [[0, 0], [1, 1]] },
+        { type: 'line', layer: 'control\nname', points: [[0, 0], [1, 1]] },
       ],
     });
     const tables = section(text, 'TABLES');
@@ -208,29 +208,35 @@ describe('writeDxf structure', () => {
 });
 
 describe('writeDxf entities', () => {
-  it('writes owned R2000 entities with direct ACI colors in input order', () => {
+  it('writes owned R2000 entities with ByLayer colors in input order', () => {
     const layers = ['line', 'poly', 'circle', 'positive', 'negative', 'text'];
     const geometries = [
-      { type: 'line', layer: 'line', color: 1, points: [[1, 2], [3, 4]] },
-      { type: 'polyline', layer: 'poly', color: 2, points: [[5, 6], [7, 8], [9, 10]] },
-      { type: 'circle', layer: 'circle', color: 3, center: [11, 12], radius: 13 },
+      { type: 'line', layer: 'line', points: [[1, 2], [3, 4]] },
+      { type: 'polyline', layer: 'poly', points: [[5, 6], [7, 8], [9, 10]] },
+      { type: 'circle', layer: 'circle', center: [11, 12], radius: 13 },
       {
-        type: 'arc', layer: 'positive', color: 4, center: [14, 15], radius: 16,
+        type: 'arc', layer: 'positive', center: [14, 15], radius: 16,
         startAngle: -10, endAngle: 45,
       },
       {
-        type: 'arc', layer: 'negative', color: 5, center: [17, 18], radius: 19,
+        type: 'arc', layer: 'negative', center: [17, 18], radius: 19,
         startAngle: 45, endAngle: -10,
       },
       {
-        type: 'text', layer: 'text', color: 6, point: [20, 21],
+        type: 'text', layer: 'text', point: [20, 21],
         text: '部\nA', height: 5, rotation: -90,
       },
     ];
     const text = joined({ layers, geometries });
     const tags = parseDxfTags(text);
     const entityRecords = records(sectionTags(tags, 'ENTITIES'));
+    const tableRecords = records(sectionTags(tags, 'TABLES'));
+    const modelSpaceHandle = tableRecords.find(record => (
+      record.type === 'BLOCK_RECORD'
+        && recordValues(record, 2)[0] === '*Model_Space'
+    )).tags.find(tag => tag.code === 5).value;
 
+    expect(() => validateRawDxfGraph(tags)).not.toThrow();
     expect(entityRecords.map(record => record.type))
       .toEqual(['LINE', 'LWPOLYLINE', 'CIRCLE', 'ARC', 'ARC', 'TEXT']);
 
@@ -241,22 +247,16 @@ describe('writeDxf entities', () => {
       ARC: ['AcDbEntity', 'AcDbCircle', 'AcDbArc'],
       TEXT: ['AcDbEntity', 'AcDbText', 'AcDbText'],
     };
-    const modelSpace = records(sectionTags(tags, 'TABLES')).find(record => (
-      record.type === 'BLOCK_RECORD' && recordValues(record, 2)[0] === '*Model_Space'
-    ));
-    const modelSpaceHandle = recordValues(modelSpace, 5)[0];
     for (const record of entityRecords) {
       expect(recordValues(record, 5)).toHaveLength(1);
       expect(recordValues(record, 330)).toEqual([modelSpaceHandle]);
       expect(recordValues(record, 100)).toEqual(expectedSubclasses[record.type]);
       expect(recordValues(record, 8)).toHaveLength(1);
-      expect(recordValues(record, 62)).toHaveLength(1);
+      expect(recordValues(record, 62)).toEqual([]);
     }
     expect(new Set(entityRecords.flatMap(record => recordValues(record, 5))).size)
       .toBe(entityRecords.length);
     expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(layers);
-    expect(entityRecords.map(record => recordValues(record, 62)[0]))
-      .toEqual(['1', '2', '3', '4', '5', '6']);
 
     const [line, polyline, circle, positiveArc, negativeArc, textEntity] = entityRecords;
     expect(recordValues(line, 10)).toEqual(['1']);
@@ -292,7 +292,7 @@ describe('writeDxf entities', () => {
     const text = joined({
       layers: ['clockwise'],
       geometries: [{
-        type: 'arc', layer: 'clockwise', color: 7, center: [0, 0], radius: 1,
+        type: 'arc', layer: 'clockwise', center: [0, 0], radius: 1,
         startAngle: 90, endAngle: -180,
       }],
     });
@@ -302,7 +302,7 @@ describe('writeDxf entities', () => {
 });
 
 describe('writeDxf validation', () => {
-  const validLine = { type: 'line', layer: 'a', color: 1, points: [[0, 0], [1, 1]] };
+  const validLine = { type: 'line', layer: 'a', points: [[0, 0], [1, 1]] };
 
   it.each([
     ['non-array layers', { layers: 'a', geometries: [] }, /layers.*array/i],
@@ -311,15 +311,12 @@ describe('writeDxf validation', () => {
     ['non-finite LINE coordinate', { layers: ['a'], geometries: [{ ...validLine, points: [[0, 0], [Infinity, 1]] }] }, /coordinate.*finite/i],
     ['wrong LINE point count', { layers: ['a'], geometries: [{ ...validLine, points: [[0, 0]] }] }, /LINE.*2 points/i],
     ['short LWPOLYLINE', { layers: ['a'], geometries: [{ ...validLine, type: 'polyline' }] }, /LWPOLYLINE.*3 points/i],
-    ['non-positive CIRCLE radius', { layers: ['a'], geometries: [{ type: 'circle', layer: 'a', color: 1, center: [0, 0], radius: 0 }] }, /radius.*positive/i],
-    ['non-finite ARC radius', { layers: ['a'], geometries: [{ type: 'arc', layer: 'a', color: 1, center: [0, 0], radius: NaN, startAngle: 0, endAngle: 90 }] }, /radius.*finite/i],
-    ['zero ARC sweep', { layers: ['a'], geometries: [{ type: 'arc', layer: 'a', color: 1, center: [0, 0], radius: 1, startAngle: 10, endAngle: 10 }] }, /sweep.*non-zero/i],
-    ['full ARC sweep', { layers: ['a'], geometries: [{ type: 'arc', layer: 'a', color: 1, center: [0, 0], radius: 1, startAngle: 10, endAngle: 370 }] }, /sweep.*less than 360/i],
-    ['non-positive TEXT height', { layers: ['a'], geometries: [{ type: 'text', layer: 'a', color: 1, point: [0, 0], text: 'A', height: 0, rotation: 0 }] }, /height.*positive/i],
-    ['non-finite TEXT rotation', { layers: ['a'], geometries: [{ type: 'text', layer: 'a', color: 1, point: [0, 0], text: 'A', height: 1, rotation: NaN }] }, /rotation.*finite/i],
-    ['ACI below range', { layers: ['a'], geometries: [{ ...validLine, color: 0 }] }, /color.*1.*255/i],
-    ['ACI above range', { layers: ['a'], geometries: [{ ...validLine, color: 256 }] }, /color.*1.*255/i],
-    ['fractional ACI', { layers: ['a'], geometries: [{ ...validLine, color: 1.5 }] }, /color.*integer/i],
+    ['non-positive CIRCLE radius', { layers: ['a'], geometries: [{ type: 'circle', layer: 'a', center: [0, 0], radius: 0 }] }, /radius.*positive/i],
+    ['non-finite ARC radius', { layers: ['a'], geometries: [{ type: 'arc', layer: 'a', center: [0, 0], radius: NaN, startAngle: 0, endAngle: 90 }] }, /radius.*finite/i],
+    ['zero ARC sweep', { layers: ['a'], geometries: [{ type: 'arc', layer: 'a', center: [0, 0], radius: 1, startAngle: 10, endAngle: 10 }] }, /sweep.*non-zero/i],
+    ['full ARC sweep', { layers: ['a'], geometries: [{ type: 'arc', layer: 'a', center: [0, 0], radius: 1, startAngle: 10, endAngle: 370 }] }, /sweep.*less than 360/i],
+    ['non-positive TEXT height', { layers: ['a'], geometries: [{ type: 'text', layer: 'a', point: [0, 0], text: 'A', height: 0, rotation: 0 }] }, /height.*positive/i],
+    ['non-finite TEXT rotation', { layers: ['a'], geometries: [{ type: 'text', layer: 'a', point: [0, 0], text: 'A', height: 1, rotation: NaN }] }, /rotation.*finite/i],
     ['unknown geometry', { layers: ['a'], geometries: [{ type: 'spline' }] }, /unknown geometry type.*spline/i],
   ])('rejects %s', (_label, input, message) => {
     expect(() => writeDxf(input)).toThrow(message);

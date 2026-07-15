@@ -1,5 +1,8 @@
 # HPGL-DXF静的サイト 実装設計
 
+> [!WARNING]
+> **旧仕様（superseded）です。** 本文に残るHPGLペン設定、ACI、`SP0`の記述は当時の履歴であり、現行契約ではありません。現行仕様は[HPGLペン設定無視とDXF ByLayer化 設計](2026-07-15-bylayer-ignore-hpgl-pens-design.md)を参照してください。
+
 ## 1. 目的
 
 複数のHPGLファイルをブラウザ内だけで解析し、入力ファイルごとにDXFレイヤーを分けた1つのAutoCAD 2000互換ASCII DXFへ変換する。HPGLのペン番号はレイヤーではなく各DXF図形のAutoCAD Color Index（ACI）として保持する。

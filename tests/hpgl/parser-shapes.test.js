@@ -5,7 +5,7 @@ const ascii = text => new TextEncoder().encode(text);
 const context = { fileName: 'a.hpgl', layerName: 'a' };
 
 describe('parseHpgl independent shapes', () => {
-  it('maps SP0 to ACI 1 and emits a circle, signed arc, and text', () => {
+  it('ignores SP0 and emits a circle, signed arc, and text', () => {
     const result = parseHpgl(
       ascii('SP0;PA0,0;CI40;PD;AA40,0,-180;PU;LBNOTE\x03'),
       context,
@@ -17,7 +17,6 @@ describe('parseHpgl independent shapes', () => {
         center: [0, 0],
         radius: 1,
         layer: 'a',
-        color: 1,
         fileName: 'a.hpgl',
         offset: 10,
       },
@@ -28,7 +27,6 @@ describe('parseHpgl independent shapes', () => {
         startAngle: 180,
         endAngle: 0,
         layer: 'a',
-        color: 1,
         fileName: 'a.hpgl',
         offset: 18,
       },
@@ -39,7 +37,6 @@ describe('parseHpgl independent shapes', () => {
         height: 5,
         rotation: 0,
         layer: 'a',
-        color: 1,
         fileName: 'a.hpgl',
         offset: 33,
       },
