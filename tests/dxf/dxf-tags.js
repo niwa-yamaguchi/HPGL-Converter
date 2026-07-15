@@ -51,3 +51,22 @@ export function records(tags) {
 export function recordValues(record, code) {
   return record.tags.filter(tag => tag.code === code).map(tag => tag.value);
 }
+
+export function validateHandleGraph(tags) {
+  const handles = tags
+    .filter(tag => tag.code === 5 || tag.code === 105)
+    .map(tag => tag.value);
+  const unique = new Set(handles);
+  if (unique.size !== handles.length) {
+    throw new RangeError('DXF contains duplicate handles');
+  }
+  const references = tags
+    .filter(tag => [330, 340, 350, 360].includes(tag.code))
+    .map(tag => tag.value)
+    .filter(value => value !== '0');
+  const missing = references.filter(reference => !unique.has(reference));
+  if (missing.length > 0) {
+    throw new RangeError(`DXF contains missing handle references: ${missing.join(', ')}`);
+  }
+  return { handles: unique, references };
+}

@@ -5,6 +5,9 @@ import { convertInputs } from '../../src/converter.js';
 import { escapeDxfText } from '../../src/dxf/escape.js';
 import { assignLayerNames } from '../../src/files/layer-names.js';
 import { parseHpgl } from '../../src/hpgl/parser.js';
+import {
+  parseDxfTags, recordValues, records, sectionTags, validateHandleGraph,
+} from '../dxf/dxf-tags.js';
 
 const REFERENCE_DIRECTORY = fileURLToPath(new URL('../../reference/', import.meta.url));
 const REFERENCE_FILES = [
@@ -81,6 +84,9 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
 
   const result = await convertInputs(inputs, () => {});
   const dxf = new TextDecoder().decode(result.buffer);
+  const tags = parseDxfTags(dxf);
+  const entityRecords = records(sectionTags(tags, 'ENTITIES'));
+  const tableRecords = records(sectionTags(tags, 'TABLES'));
   const pairs = entityPairs(dxf);
   const entityTypes = pairs.filter(pair => pair.code === 0).map(pair => pair.value);
   const entityColors = pairs.filter(pair => pair.code === 62).map(pair => Number(pair.value));
@@ -106,10 +112,21 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
     result.files.reduce((total, file) => total + file.geometryCount, 0),
   );
   expect(entityTypes).toHaveLength(result.totals.geometryCount);
+  expect(() => validateHandleGraph(tags)).not.toThrow();
+  expect(entityRecords).toHaveLength(result.totals.geometryCount);
+  expect(entityRecords.every(entity => recordValues(entity, 5).length === 1)).toBe(true);
+  expect(entityRecords.every(entity => recordValues(entity, 330).length === 1)).toBe(true);
+  expect(entityRecords.every(entity => recordValues(entity, 100).includes('AcDbEntity')))
+    .toBe(true);
   expect(entityColors).toEqual(expectedGeometries.map(geometry => geometry.color));
   expect(entityColors.every(color => Number.isInteger(color) && color >= 1 && color <= 255))
     .toBe(true);
 
+  const dxfLayerNames = tableRecords
+    .filter(record => record.type === 'LAYER')
+    .map(record => recordValues(record, 2)[0]);
+  expect(dxfLayerNames).toEqual(['0', ...layerNames.map(escapeDxfText)]);
+  expect(dxfLayerNames.slice(1)).toHaveLength(8);
   for (const layerName of layerNames) {
     const escaped = escapeDxfText(layerName);
     expect(dxf).toContain(`2\n${escaped}\n`);
@@ -120,4 +137,11 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
   expect(numericEntityValues.every(Number.isFinite)).toBe(true);
   expect(Math.max(...xCoordinates) - Math.min(...xCoordinates)).toBeGreaterThan(0);
   expect(Math.max(...yCoordinates) - Math.min(...yCoordinates)).toBeGreaterThan(0);
+
+  const firstEntity = entityRecords[0];
+  expect(firstEntity.type).toBe('LINE');
+  expect(Number(recordValues(firstEntity, 10)[0])).toBeCloseTo(2367 / 40, 12);
+  expect(Number(recordValues(firstEntity, 20)[0])).toBeCloseTo(4553 / 40, 12);
+  expect(Number(recordValues(firstEntity, 11)[0])).toBeCloseTo(2367 / 40, 12);
+  expect(Number(recordValues(firstEntity, 21)[0])).toBeCloseTo(4590 / 40, 12);
 });

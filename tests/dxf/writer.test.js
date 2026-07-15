@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { writeDxf } from '../../src/dxf/writer.js';
-import { parseDxfTags, recordValues, records, sectionTags } from './dxf-tags.js';
+import {
+  parseDxfTags, recordValues, records, sectionTags, validateHandleGraph,
+} from './dxf-tags.js';
 
 function joined(input) {
   return writeDxf(input).join('');
@@ -65,11 +67,61 @@ describe('writeDxf structure', () => {
       .map(record => recordValues(record, 2)[0])).toEqual(['*Model_Space', '*Paper_Space']);
     expect(tableRecords.filter(record => record.type === 'DIMSTYLE')).toEqual([]);
 
+    expect(tableRecords.filter(record => record.type === 'LTYPE')
+      .map(record => recordValues(record, 2)[0]))
+      .toEqual(['ByBlock', 'ByLayer', 'CONTINUOUS']);
+    expect(tableRecords.filter(record => record.type === 'STYLE')
+      .map(record => recordValues(record, 2)[0])).toEqual(['STANDARD']);
+    expect(tableRecords.filter(record => record.type === 'APPID')
+      .map(record => recordValues(record, 2)[0])).toEqual(['ACAD']);
+
+    const header = sectionTags(tags, 'HEADER');
+    const handseedVariable = header.findIndex(tag => tag.code === 9 && tag.value === '$HANDSEED');
+    const handseed = header[handseedVariable + 1];
+    validateHandleGraph(tags);
+    expect(handseed).toEqual({ code: 5, value: expect.any(String) });
+    const assignedHandles = tags
+      .filter(tag => (tag.code === 5 || tag.code === 105) && tag !== handseed)
+      .map(tag => tag.value);
+    expect(assignedHandles).not.toContain(handseed.value);
+    expect(Number.parseInt(handseed.value, 16)).toBe(
+      Math.max(...assignedHandles.map(handle => Number.parseInt(handle, 16))) + 1,
+    );
+
     const blockRecords = records(sectionTags(tags, 'BLOCKS'));
     expect(blockRecords.map(record => record.type)).toEqual(['BLOCK', 'ENDBLK', 'BLOCK', 'ENDBLK']);
     expect(records(sectionTags(tags, 'ENTITIES'))).toEqual([]);
     expect(records(sectionTags(tags, 'OBJECTS')).map(record => record.type))
       .toEqual(['DICTIONARY', 'DICTIONARY']);
+  });
+
+  it.each([
+    { layers: [], geometries: [] },
+    {
+      layers: ['a'],
+      geometries: [
+        { type: 'line', layer: 'a', color: 1, points: [[0, 0], [1, 1]] },
+      ],
+    },
+  ])('writes a resolvable handle graph for %#', input => {
+    const tags = parseDxfTags(joined(input));
+    expect(() => validateHandleGraph(tags)).not.toThrow();
+  });
+
+  it('rejects duplicate handles in the handle graph validator', () => {
+    const tags = [{ code: 5, value: 'A' }, { code: 105, value: 'A' }];
+    expect(() => validateHandleGraph(tags)).toThrow(/duplicate handles/i);
+  });
+
+  it('rejects unresolved nonzero references in the handle graph validator', () => {
+    const tags = [
+      { code: 5, value: 'A' },
+      { code: 330, value: '0' },
+      { code: 340, value: 'B' },
+      { code: 350, value: 'C' },
+      { code: 360, value: 'D' },
+    ];
+    expect(() => validateHandleGraph(tags)).toThrow(/missing handle references: B, C, D/i);
   });
 
   it('registers layer 0 and unique input layers in order and escapes Unicode', () => {
