@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>HPGL to DXF conversion arrows</title>
+  <rect width="64" height="64" rx="14" fill="#146fae"/>
+  <path d="M14 23h29l-7-7" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 41H21l7 7" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="14" cy="23" r="4" fill="#f1a72d"/>
+  <circle cx="50" cy="41" r="4" fill="#0c223d"/>
+</svg>
