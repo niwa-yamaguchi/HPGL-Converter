@@ -6,7 +6,8 @@
     "dev": "vite",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "vite build"
+    "build": "vite build",
+    "generate:reference-dxf": "node scripts/generate-reference-dxf.mjs"
   },
   "devDependencies": {
     "jsdom": "^29.1.1",

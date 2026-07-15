@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { writeDxf } from '../../src/dxf/writer.js';
+import {
+  parseDxfTags, recordValues, records, sectionTags, tables,
+  validateHandleGraph, validateRawDxfGraph,
+} from './dxf-tags.js';
 
 function joined(input) {
   return writeDxf(input).join('');
@@ -23,13 +27,149 @@ describe('writeDxf structure', () => {
     expect(text).toContain('9\n$ACADVER\n1\nAC1015\n');
     expect(text).toContain('9\n$INSUNITS\n70\n4\n');
     expect(text).toContain('0\nTABLE\n2\nLTYPE\n');
-    expect(text).toContain('0\nLTYPE\n2\nCONTINUOUS\n');
     expect(text).toContain('0\nTABLE\n2\nLAYER\n');
-    expect(text).toContain('0\nLAYER\n2\n0\n70\n0\n62\n7\n6\nCONTINUOUS\n');
-    expect(section(text, 'BLOCKS')).toBe('');
+    const tableRecords = records(sectionTags(parseDxfTags(text), 'TABLES'));
+    expect(tableRecords.some(record => (
+      record.type === 'LTYPE' && recordValues(record, 2)[0] === 'CONTINUOUS'
+    ))).toBe(true);
+    const layer0 = tableRecords.find(record => (
+      record.type === 'LAYER' && recordValues(record, 2)[0] === '0'
+    ));
+    expect(recordValues(layer0, 70)).toEqual(['0']);
+    expect(recordValues(layer0, 62)).toEqual(['7']);
+    expect(recordValues(layer0, 6)).toEqual(['CONTINUOUS']);
     expect(section(text, 'ENTITIES')).toBe('');
-    expect(section(text, 'OBJECTS')).toBe('');
     expect(text.endsWith('0\nEOF\n')).toBe(true);
+  });
+
+  it('writes the required R2000 tables, spaces, viewport, and dictionaries', () => {
+    const text = joined({ layers: [], geometries: [] });
+    const tags = parseDxfTags(text);
+    const sectionNames = [];
+    for (let index = 0; index + 1 < tags.length; index += 1) {
+      if (tags[index].code === 0 && tags[index].value === 'SECTION'
+        && tags[index + 1].code === 2) {
+        sectionNames.push(tags[index + 1].value);
+      }
+    }
+    expect(sectionNames).toEqual(['HEADER', 'CLASSES', 'TABLES', 'BLOCKS', 'ENTITIES', 'OBJECTS']);
+
+    const tableRecords = records(sectionTags(tags, 'TABLES'));
+    const tableNames = tableRecords
+      .filter(record => record.type === 'TABLE')
+      .map(record => recordValues(record, 2)[0]);
+    expect(tableNames).toEqual([
+      'VPORT', 'LTYPE', 'LAYER', 'STYLE', 'VIEW', 'UCS', 'APPID', 'DIMSTYLE', 'BLOCK_RECORD',
+    ]);
+    expect(tableRecords.some(record => (
+      record.type === 'VPORT' && recordValues(record, 2)[0] === '*ACTIVE'
+    ))).toBe(true);
+    expect(tableRecords.filter(record => record.type === 'BLOCK_RECORD')
+      .map(record => recordValues(record, 2)[0])).toEqual(['*Model_Space', '*Paper_Space']);
+    expect(tableRecords.filter(record => record.type === 'DIMSTYLE')).toEqual([]);
+
+    expect(tableRecords.filter(record => record.type === 'LTYPE')
+      .map(record => recordValues(record, 2)[0]))
+      .toEqual(['ByBlock', 'ByLayer', 'CONTINUOUS']);
+    expect(tableRecords.filter(record => record.type === 'STYLE')
+      .map(record => recordValues(record, 2)[0])).toEqual(['STANDARD']);
+    expect(tableRecords.filter(record => record.type === 'APPID')
+      .map(record => recordValues(record, 2)[0])).toEqual(['ACAD']);
+
+    const header = sectionTags(tags, 'HEADER');
+    const handseedVariable = header.findIndex(tag => tag.code === 9 && tag.value === '$HANDSEED');
+    const handseed = header[handseedVariable + 1];
+    validateRawDxfGraph(tags);
+    expect(handseed).toEqual({ code: 5, value: expect.any(String) });
+    const assignedHandles = tags
+      .filter(tag => (tag.code === 5 || tag.code === 105) && tag !== handseed)
+      .map(tag => tag.value);
+    expect(assignedHandles).not.toContain(handseed.value);
+    expect(Number.parseInt(handseed.value, 16)).toBe(
+      Math.max(...assignedHandles.map(handle => Number.parseInt(handle, 16))) + 1,
+    );
+
+    const blockRecords = records(sectionTags(tags, 'BLOCKS'));
+    expect(blockRecords.map(record => record.type)).toEqual(['BLOCK', 'ENDBLK', 'BLOCK', 'ENDBLK']);
+    expect(records(sectionTags(tags, 'ENTITIES'))).toEqual([]);
+    expect(records(sectionTags(tags, 'OBJECTS')).map(record => record.type))
+      .toEqual(['DICTIONARY', 'DICTIONARY', 'DICTIONARY', 'LAYOUT', 'LAYOUT']);
+
+    const dimstyle = tables(tags).find(table => table.name === 'DIMSTYLE').table;
+    expect(recordValues(dimstyle, 5)).toHaveLength(1);
+    expect(recordValues(dimstyle, 105)).toHaveLength(0);
+  });
+
+  it('links the root dictionary to an ACAD_LAYOUT dictionary in raw tags', () => {
+    const objectRecords = records(sectionTags(
+      parseDxfTags(joined({ layers: [], geometries: [] })),
+      'OBJECTS',
+    ));
+    const root = objectRecords.find(record => recordValues(record, 330)[0] === '0');
+
+    expect(recordValues(root, 3)).toContain('ACAD_LAYOUT');
+    expect(objectRecords.filter(record => record.type === 'DICTIONARY')).toHaveLength(3);
+  });
+
+  it('emits owned Model and Layout1 LAYOUT objects in raw tags', () => {
+    const objectRecords = records(sectionTags(
+      parseDxfTags(joined({ layers: [], geometries: [] })),
+      'OBJECTS',
+    ));
+    const layouts = objectRecords.filter(record => record.type === 'LAYOUT');
+
+    expect(layouts.map(record => recordValues(record, 1).at(-1))).toEqual(['Model', 'Layout1']);
+    expect(layouts.every(record => recordValues(record, 330).length === 2)).toBe(true);
+  });
+
+  it('emits reciprocal BLOCK_RECORD to LAYOUT group 340 references in raw tags', () => {
+    const blockRecords = records(sectionTags(
+      parseDxfTags(joined({ layers: [], geometries: [] })),
+      'TABLES',
+    )).filter(record => record.type === 'BLOCK_RECORD');
+
+    expect(blockRecords.map(record => recordValues(record, 340))).toEqual([
+      [expect.any(String)],
+      [expect.any(String)],
+    ]);
+  });
+
+  it.each([
+    { layers: [], geometries: [] },
+    {
+      layers: ['a'],
+      geometries: [
+        { type: 'line', layer: 'a', color: 1, points: [[0, 0], [1, 1]] },
+      ],
+    },
+  ])('writes a resolvable handle graph for %#', input => {
+    const tags = parseDxfTags(joined(input));
+    expect(() => validateRawDxfGraph(tags)).not.toThrow();
+  });
+
+  it('does not treat HEADER HANDSEED as an assigned object handle', () => {
+    const tags = parseDxfTags(joined({ layers: [], geometries: [] }));
+    const header = sectionTags(tags, 'HEADER');
+    const handseedIndex = header.findIndex(tag => tag.code === 9 && tag.value === '$HANDSEED');
+    const handseed = header[handseedIndex + 1].value;
+
+    expect(validateHandleGraph(tags).handles.has(handseed)).toBe(false);
+  });
+
+  it('rejects duplicate handles in the handle graph validator', () => {
+    const tags = [{ code: 5, value: 'A' }, { code: 105, value: 'A' }];
+    expect(() => validateHandleGraph(tags)).toThrow(/duplicate handles/i);
+  });
+
+  it('rejects unresolved nonzero references in the handle graph validator', () => {
+    const tags = [
+      { code: 5, value: 'A' },
+      { code: 330, value: '0' },
+      { code: 340, value: 'B' },
+      { code: 350, value: 'C' },
+      { code: 360, value: 'D' },
+    ];
+    expect(() => validateHandleGraph(tags)).toThrow(/missing handle references: B, C, D/i);
   });
 
   it('registers layer 0 and unique input layers in order and escapes Unicode', () => {
@@ -57,44 +197,95 @@ describe('writeDxf structure', () => {
       ],
     });
     const tables = section(text, 'TABLES');
+    const layerNames = records(sectionTags(parseDxfTags(text), 'TABLES'))
+      .filter(record => record.type === 'LAYER')
+      .map(record => recordValues(record, 2)[0]);
 
     expect(tables.match(/0\nLAYER\n/g)).toHaveLength(2);
-    expect(tables.split('0\nLAYER\n2\ncontrol name\n')).toHaveLength(2);
+    expect(layerNames).toEqual(['0', 'control name']);
     expect(section(text, 'ENTITIES')).toContain('8\ncontrol name\n');
   });
 });
 
 describe('writeDxf entities', () => {
-  it('writes exact entities with direct ACI colors in input order', () => {
-    const text = joined({
-      layers: ['line', 'poly', 'circle', 'positive', 'negative', 'text'],
-      geometries: [
-        { type: 'line', layer: 'line', color: 1, points: [[1, 2], [3, 4]] },
-        { type: 'polyline', layer: 'poly', color: 2, points: [[5, 6], [7, 8], [9, 10]] },
-        { type: 'circle', layer: 'circle', color: 3, center: [11, 12], radius: 13 },
-        {
-          type: 'arc', layer: 'positive', color: 4, center: [14, 15], radius: 16,
-          startAngle: -10, endAngle: 45,
-        },
-        {
-          type: 'arc', layer: 'negative', color: 5, center: [17, 18], radius: 19,
-          startAngle: 45, endAngle: -10,
-        },
-        {
-          type: 'text', layer: 'text', color: 6, point: [20, 21],
-          text: '部\nA', height: 5, rotation: -90,
-        },
-      ],
-    });
+  it('writes owned R2000 entities with direct ACI colors in input order', () => {
+    const layers = ['line', 'poly', 'circle', 'positive', 'negative', 'text'];
+    const geometries = [
+      { type: 'line', layer: 'line', color: 1, points: [[1, 2], [3, 4]] },
+      { type: 'polyline', layer: 'poly', color: 2, points: [[5, 6], [7, 8], [9, 10]] },
+      { type: 'circle', layer: 'circle', color: 3, center: [11, 12], radius: 13 },
+      {
+        type: 'arc', layer: 'positive', color: 4, center: [14, 15], radius: 16,
+        startAngle: -10, endAngle: 45,
+      },
+      {
+        type: 'arc', layer: 'negative', color: 5, center: [17, 18], radius: 19,
+        startAngle: 45, endAngle: -10,
+      },
+      {
+        type: 'text', layer: 'text', color: 6, point: [20, 21],
+        text: '部\nA', height: 5, rotation: -90,
+      },
+    ];
+    const text = joined({ layers, geometries });
+    const tags = parseDxfTags(text);
+    const entityRecords = records(sectionTags(tags, 'ENTITIES'));
 
-    expect(section(text, 'ENTITIES')).toBe(
-      '0\nLINE\n8\nline\n62\n1\n10\n1\n20\n2\n30\n0\n11\n3\n21\n4\n31\n0\n'
-      + '0\nLWPOLYLINE\n8\npoly\n62\n2\n90\n3\n70\n0\n10\n5\n20\n6\n10\n7\n20\n8\n10\n9\n20\n10\n'
-      + '0\nCIRCLE\n8\ncircle\n62\n3\n10\n11\n20\n12\n30\n0\n40\n13\n'
-      + '0\nARC\n8\npositive\n62\n4\n10\n14\n20\n15\n30\n0\n40\n16\n50\n350\n51\n45\n'
-      + '0\nARC\n8\nnegative\n62\n5\n10\n17\n20\n18\n30\n0\n40\n19\n50\n350\n51\n45\n'
-      + '0\nTEXT\n8\ntext\n62\n6\n10\n20\n20\n21\n30\n0\n40\n5\n1\n\\U+90E8 A\n50\n-90\n',
-    );
+    expect(entityRecords.map(record => record.type))
+      .toEqual(['LINE', 'LWPOLYLINE', 'CIRCLE', 'ARC', 'ARC', 'TEXT']);
+
+    const expectedSubclasses = {
+      LINE: ['AcDbEntity', 'AcDbLine'],
+      LWPOLYLINE: ['AcDbEntity', 'AcDbPolyline'],
+      CIRCLE: ['AcDbEntity', 'AcDbCircle'],
+      ARC: ['AcDbEntity', 'AcDbCircle', 'AcDbArc'],
+      TEXT: ['AcDbEntity', 'AcDbText', 'AcDbText'],
+    };
+    const modelSpace = records(sectionTags(tags, 'TABLES')).find(record => (
+      record.type === 'BLOCK_RECORD' && recordValues(record, 2)[0] === '*Model_Space'
+    ));
+    const modelSpaceHandle = recordValues(modelSpace, 5)[0];
+    for (const record of entityRecords) {
+      expect(recordValues(record, 5)).toHaveLength(1);
+      expect(recordValues(record, 330)).toEqual([modelSpaceHandle]);
+      expect(recordValues(record, 100)).toEqual(expectedSubclasses[record.type]);
+      expect(recordValues(record, 8)).toHaveLength(1);
+      expect(recordValues(record, 62)).toHaveLength(1);
+    }
+    expect(new Set(entityRecords.flatMap(record => recordValues(record, 5))).size)
+      .toBe(entityRecords.length);
+    expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(layers);
+    expect(entityRecords.map(record => recordValues(record, 62)[0]))
+      .toEqual(['1', '2', '3', '4', '5', '6']);
+
+    const [line, polyline, circle, positiveArc, negativeArc, textEntity] = entityRecords;
+    expect(recordValues(line, 10)).toEqual(['1']);
+    expect(recordValues(line, 20)).toEqual(['2']);
+    expect(recordValues(line, 11)).toEqual(['3']);
+    expect(recordValues(line, 21)).toEqual(['4']);
+    expect(recordValues(polyline, 90)).toEqual(['3']);
+    expect(recordValues(polyline, 10)).toEqual(['5', '7', '9']);
+    expect(recordValues(polyline, 20)).toEqual(['6', '8', '10']);
+    expect(recordValues(circle, 10)).toEqual(['11']);
+    expect(recordValues(circle, 20)).toEqual(['12']);
+    expect(recordValues(circle, 40)).toEqual(['13']);
+    expect(recordValues(positiveArc, 50)).toEqual(['350']);
+    expect(recordValues(positiveArc, 51)).toEqual(['45']);
+    expect(recordValues(negativeArc, 50)).toEqual(['350']);
+    expect(recordValues(negativeArc, 51)).toEqual(['45']);
+    expect(recordValues(textEntity, 10)).toEqual(['20']);
+    expect(recordValues(textEntity, 20)).toEqual(['21']);
+    expect(recordValues(textEntity, 40)).toEqual(['5']);
+    expect(recordValues(textEntity, 1)).toEqual(['\\U+90E8 A']);
+    expect(recordValues(textEntity, 50)).toEqual(['-90']);
+
+    const positiveArcTags = positiveArc.tags.map(tag => [tag.code, tag.value]);
+    expect(positiveArcTags.indexOf(positiveArcTags.find(tag => tag[1] === 'AcDbCircle')))
+      .toBeLessThan(positiveArcTags.findIndex(tag => tag[0] === 10));
+    expect(positiveArcTags.indexOf(positiveArcTags.find(tag => tag[1] === 'AcDbArc')))
+      .toBeLessThan(positiveArcTags.findIndex(tag => tag[0] === 50));
+    const textTags = textEntity.tags.map(tag => [tag.code, tag.value]);
+    expect(textTags.at(-1)).toEqual([100, 'AcDbText']);
   });
 
   it('swaps negative-sweep arc angles before normalization', () => {
