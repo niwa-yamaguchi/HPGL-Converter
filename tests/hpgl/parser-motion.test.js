@@ -5,7 +5,7 @@ const ascii = text => new TextEncoder().encode(text);
 const context = { fileName: 'a.hpgl', layerName: 'a' };
 
 describe('parseHpgl motion commands', () => {
-  it('creates line and polyline geometries with the current ACI and context', () => {
+  it('creates line and polyline geometries with context', () => {
     const result = parseHpgl(
       ascii('SP2;PA0,0;PD40,0;PU;PD80,0,80,40;PU;'),
       context,
@@ -15,7 +15,6 @@ describe('parseHpgl motion commands', () => {
       {
         type: 'line',
         layer: 'a',
-        color: 2,
         fileName: 'a.hpgl',
         offset: 10,
         points: [[0, 0], [1, 0]],
@@ -23,7 +22,6 @@ describe('parseHpgl motion commands', () => {
       {
         type: 'polyline',
         layer: 'a',
-        color: 2,
         fileName: 'a.hpgl',
         offset: 20,
         points: [[1, 0], [2, 0], [2, 1]],
@@ -150,10 +148,10 @@ describe('parseHpgl motion commands', () => {
     ]);
   });
 
-  it('maps SP0 to ACI 1 and warns for unsupported commands while DF is a no-op', () => {
+  it('ignores SP0 and warns for unsupported commands while DF is a no-op', () => {
     const result = parseHpgl(ascii('SP0;DF;ZZ;PD40,0;PU;'), context);
 
-    expect(result.geometries[0]).toMatchObject({ color: 1 });
+    expect(result.geometries[0]).not.toHaveProperty('color');
     expect(result.diagnostics).toEqual([
       expect.objectContaining({ severity: 'warning', command: 'ZZ', offset: 7 }),
     ]);

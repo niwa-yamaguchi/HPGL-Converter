@@ -94,7 +94,6 @@ export function parseHpgl(data, context) {
     positionMm: [0, 0],
     absolute: true,
     penDown: false,
-    color: 1,
     polyline: [],
     polylineOffset: null,
     transform: createCoordinateTransform(),
@@ -123,7 +122,6 @@ export function parseHpgl(data, context) {
   function shapeMetadata(token) {
     return {
       layer: context.layerName,
-      color: state.color,
       fileName: context.fileName,
       offset: token.offset,
     };
@@ -134,7 +132,6 @@ export function parseHpgl(data, context) {
       geometries.push({
         type: state.polyline.length === 2 ? 'line' : 'polyline',
         layer: context.layerName,
-        color: state.color,
         fileName: context.fileName,
         offset: state.polylineOffset,
         points: state.polyline.map(point => [...point]),
@@ -203,27 +200,6 @@ export function parseHpgl(data, context) {
     move(destinations, token.offset);
   }
 
-  function selectPen(pen, command) {
-    if (!Number.isInteger(pen) || pen < 0 || pen > 255) {
-      throw new RangeError(`${command} pen number must be an integer from 0 through 255`);
-    }
-    state.color = pen === 0 ? 1 : pen;
-  }
-
-  function handlePen(token) {
-    flushPolyline();
-    try {
-      const values = parseNumbers(token.params);
-      if (values.length !== 1) {
-        throw new RangeError('SP requires one pen number');
-      }
-      selectPen(values[0], 'SP');
-    } catch (error) {
-      state.color = 7;
-      throw error;
-    }
-  }
-
   function handlePe(token) {
     const decoded = decodePe(token.params);
     if (decoded.error) {
@@ -241,18 +217,7 @@ export function parseHpgl(data, context) {
         continue;
       }
 
-      flushPolyline();
-      try {
-        selectPen(event.value, 'PE');
-      } catch (error) {
-        state.color = 7;
-        addDiagnostic(diagnostic(
-          'error',
-          token,
-          error instanceof Error ? error.message : 'Invalid PE pen selection',
-          context.fileName,
-        ));
-      }
+      // Decoded pen events are intentionally ignored.
     }
   }
 
@@ -400,7 +365,6 @@ export function parseHpgl(data, context) {
         continue;
       }
       if (token.code === 'SP') {
-        handlePen(token);
         continue;
       }
       if (token.code === 'PE') {
@@ -415,7 +379,6 @@ export function parseHpgl(data, context) {
         state.positionMm = [0, 0];
         state.absolute = true;
         state.penDown = false;
-        state.color = 1;
         state.transform.reset();
         continue;
       }

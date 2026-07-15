@@ -5,30 +5,25 @@ const ascii = text => new TextEncoder().encode(text);
 const context = { fileName: 'a.hpgl', layerName: 'a' };
 
 describe('parseHpgl recovery and diagnostics', () => {
-  it.each([
-    ['SP255', 255, 0],
-    ['SP0', 1, 0],
-    ['SP256', 7, 1],
-    ['SP1.5', 7, 1],
-    ['SP', 7, 1],
-    ['SPx', 7, 1],
-  ])('selects the recovery-safe ACI for %s', (command, color, errorCount) => {
-    const result = parseHpgl(ascii(`${command};PD40,0;PU;`), context);
+  it.each(['SP255', 'SP0', 'SP256', 'SP1.5', 'SP', 'SPx'])(
+    'ignores %s without splitting geometry or adding diagnostics',
+    command => {
+      const result = parseHpgl(
+        ascii(`PD40,0;${command};PD80,0;PU;`),
+        context,
+      );
 
-    expect(result.geometries).toEqual([
-      expect.objectContaining({ type: 'line', color }),
-    ]);
-    expect(result.summary.errorCount).toBe(errorCount);
-  });
-
-  it.each(['SP256', 'SP1.5', 'SP', 'SPx'])('%s flushes an open line before recovery', command => {
-    const result = parseHpgl(ascii(`PD40,0;${command};PD80,0;PU;`), context);
-
-    expect(result.geometries).toEqual([
-      expect.objectContaining({ type: 'line', color: 1, points: [[0, 0], [1, 0]] }),
-      expect.objectContaining({ type: 'line', color: 7, points: [[1, 0], [2, 0]] }),
-    ]);
-  });
+      expect(result.geometries).toEqual([expect.objectContaining({
+        type: 'polyline',
+        points: [[0, 0], [1, 0], [2, 0]],
+      })]);
+      expect(result.geometries[0]).not.toHaveProperty('color');
+      expect(result.diagnostics).toEqual([]);
+      expect(result.summary).toEqual({
+        geometryCount: 1, errorCount: 0, warningCount: 0,
+      });
+    },
+  );
 
   it('accepts known no-op commands with arbitrary parameters and warns for unknown commands', () => {
     const result = parseHpgl(
@@ -118,8 +113,8 @@ describe('parseHpgl recovery and diagnostics', () => {
     );
 
     expect(result.geometries).toEqual([
-      expect.objectContaining({ color: 5, points: [[0, 0], [10, 5]] }),
-      expect.objectContaining({ color: 1, points: [[1, 0], [2, 0]] }),
+      expect.objectContaining({ points: [[0, 0], [10, 5]] }),
+      expect.objectContaining({ points: [[1, 0], [2, 0]] }),
     ]);
     expect(result.summary).toEqual({ geometryCount: 2, errorCount: 0, warningCount: 0 });
   });
