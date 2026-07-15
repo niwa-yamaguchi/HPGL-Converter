@@ -92,19 +92,6 @@ function validateRadius(radius, label) {
   return radius;
 }
 
-function validateColor(color) {
-  if (typeof color !== 'number' || !Number.isFinite(color)) {
-    throw new RangeError('Geometry color must be a finite integer from 1 through 255');
-  }
-  if (!Number.isInteger(color)) {
-    throw new RangeError('Geometry color must be an integer from 1 through 255');
-  }
-  if (color < 1 || color > 255) {
-    throw new RangeError('Geometry color must be from 1 through 255');
-  }
-  return color;
-}
-
 function validateFinite(value, label) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new RangeError(`${label} must be finite`);
@@ -126,14 +113,13 @@ function validateCommonGeometry(geometry) {
   }
   return {
     layer: escapeDxfText(geometry.layer),
-    color: validateColor(geometry.color),
   };
 }
 
 function commonPairs(type, common, handle, owner) {
   return [
     [0, type], [5, handle], [330, owner], [100, 'AcDbEntity'],
-    [8, common.layer], [62, common.color],
+    [8, common.layer],
   ];
 }
 
