@@ -2,6 +2,13 @@ import { escapeDxfText } from './escape.js';
 import { createHandleAllocator } from './handles.js';
 
 const GEOMETRY_TYPES = new Set(['line', 'polyline', 'circle', 'arc', 'text']);
+const ENTITY_SUBCLASSES = {
+  LINE: ['AcDbLine'],
+  LWPOLYLINE: ['AcDbPolyline'],
+  CIRCLE: ['AcDbCircle'],
+  ARC: ['AcDbCircle', 'AcDbArc'],
+  TEXT: ['AcDbText'],
+};
 const TABLE_DEFINITIONS = [
   ['VPORT', 'AcDbViewportTableRecord'],
   ['LTYPE', 'AcDbLinetypeTableRecord'],
@@ -120,24 +127,28 @@ function validateCommonGeometry(geometry) {
   };
 }
 
-function commonPairs(type, common) {
-  return [[0, type], [8, common.layer], [62, common.color]];
+function commonPairs(type, common, handle, owner) {
+  return [
+    [0, type], [5, handle], [330, owner], [100, 'AcDbEntity'],
+    [8, common.layer], [62, common.color],
+  ];
 }
 
-function linePairs(geometry, common) {
+function linePairs(geometry, common, handle, owner) {
   if (!Array.isArray(geometry.points) || geometry.points.length !== 2) {
     throw new RangeError('LINE requires exactly 2 points');
   }
   const start = validatePoint(geometry.points[0], 'LINE start');
   const end = validatePoint(geometry.points[1], 'LINE end');
   return [
-    ...commonPairs('LINE', common),
+    ...commonPairs('LINE', common, handle, owner),
+    [100, ENTITY_SUBCLASSES.LINE[0]],
     [10, start[0]], [20, start[1]], [30, 0],
     [11, end[0]], [21, end[1]], [31, 0],
   ];
 }
 
-function polylinePairs(geometry, common) {
+function polylinePairs(geometry, common, handle, owner) {
   if (!Array.isArray(geometry.points) || geometry.points.length < 3) {
     throw new RangeError('LWPOLYLINE requires at least 3 points');
   }
@@ -145,23 +156,25 @@ function polylinePairs(geometry, common) {
     validatePoint(point, `LWPOLYLINE point ${index}`)
   ));
   return [
-    ...commonPairs('LWPOLYLINE', common),
+    ...commonPairs('LWPOLYLINE', common, handle, owner),
+    [100, ENTITY_SUBCLASSES.LWPOLYLINE[0]],
     [90, points.length],
     [70, 0],
     ...points.flatMap(point => [[10, point[0]], [20, point[1]]]),
   ];
 }
 
-function circlePairs(geometry, common) {
+function circlePairs(geometry, common, handle, owner) {
   const center = validatePoint(geometry.center, 'CIRCLE center');
   const radius = validateRadius(geometry.radius, 'CIRCLE');
   return [
-    ...commonPairs('CIRCLE', common),
+    ...commonPairs('CIRCLE', common, handle, owner),
+    [100, ENTITY_SUBCLASSES.CIRCLE[0]],
     [10, center[0]], [20, center[1]], [30, 0], [40, radius],
   ];
 }
 
-function arcPairs(geometry, common) {
+function arcPairs(geometry, common, handle, owner) {
   const center = validatePoint(geometry.center, 'ARC center');
   const radius = validateRadius(geometry.radius, 'ARC');
   const hpglStart = validateFinite(geometry.startAngle, 'ARC start angle');
@@ -176,13 +189,15 @@ function arcPairs(geometry, common) {
   const dxfStart = sweep > 0 ? hpglStart : hpglEnd;
   const dxfEnd = sweep > 0 ? hpglEnd : hpglStart;
   return [
-    ...commonPairs('ARC', common),
+    ...commonPairs('ARC', common, handle, owner),
+    [100, ENTITY_SUBCLASSES.ARC[0]],
     [10, center[0]], [20, center[1]], [30, 0], [40, radius],
+    [100, ENTITY_SUBCLASSES.ARC[1]],
     [50, normalizeAngle(dxfStart)], [51, normalizeAngle(dxfEnd)],
   ];
 }
 
-function textPairs(geometry, common) {
+function textPairs(geometry, common, handle, owner) {
   const point = validatePoint(geometry.point, 'TEXT insertion');
   const height = validateFinite(geometry.height, 'TEXT height');
   if (height <= 0) {
@@ -193,13 +208,15 @@ function textPairs(geometry, common) {
     throw new TypeError('TEXT value must be a string');
   }
   return [
-    ...commonPairs('TEXT', common),
+    ...commonPairs('TEXT', common, handle, owner),
+    [100, ENTITY_SUBCLASSES.TEXT[0]],
     [10, point[0]], [20, point[1]], [30, 0], [40, height],
     [1, escapeDxfText(geometry.text)], [50, rotation],
+    [100, ENTITY_SUBCLASSES.TEXT[0]],
   ];
 }
 
-function geometryPairs(geometry) {
+function geometryPairs(geometry, handle, owner) {
   if (geometry === null || typeof geometry !== 'object' || Array.isArray(geometry)) {
     throw new TypeError('Geometry must be an object');
   }
@@ -209,15 +226,15 @@ function geometryPairs(geometry) {
   const common = validateCommonGeometry(geometry);
   switch (geometry.type) {
     case 'line':
-      return linePairs(geometry, common);
+      return linePairs(geometry, common, handle, owner);
     case 'polyline':
-      return polylinePairs(geometry, common);
+      return polylinePairs(geometry, common, handle, owner);
     case 'circle':
-      return circlePairs(geometry, common);
+      return circlePairs(geometry, common, handle, owner);
     case 'arc':
-      return arcPairs(geometry, common);
+      return arcPairs(geometry, common, handle, owner);
     case 'text':
-      return textPairs(geometry, common);
+      return textPairs(geometry, common, handle, owner);
     default:
       throw new TypeError(`Unknown geometry type: ${String(geometry.type)}`);
   }
@@ -418,8 +435,10 @@ export function writeDxf(input) {
   writeTables(chunks, layers, graph);
   writeBlocks(chunks, graph);
   pushSectionStart(chunks, 'ENTITIES');
-  for (const geometry of input.geometries) {
-    pushPairs(chunks, geometryPairs(geometry));
+  for (const [index, geometry] of input.geometries.entries()) {
+    pushPairs(chunks, geometryPairs(
+      geometry, graph.entities[index], graph.records.modelSpace,
+    ));
   }
   chunks.push(pair(0, 'ENDSEC'));
   writeObjects(chunks, graph);

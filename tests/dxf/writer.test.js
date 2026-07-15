@@ -108,36 +108,84 @@ describe('writeDxf structure', () => {
 });
 
 describe('writeDxf entities', () => {
-  it('writes exact entities with direct ACI colors in input order', () => {
-    const text = joined({
-      layers: ['line', 'poly', 'circle', 'positive', 'negative', 'text'],
-      geometries: [
-        { type: 'line', layer: 'line', color: 1, points: [[1, 2], [3, 4]] },
-        { type: 'polyline', layer: 'poly', color: 2, points: [[5, 6], [7, 8], [9, 10]] },
-        { type: 'circle', layer: 'circle', color: 3, center: [11, 12], radius: 13 },
-        {
-          type: 'arc', layer: 'positive', color: 4, center: [14, 15], radius: 16,
-          startAngle: -10, endAngle: 45,
-        },
-        {
-          type: 'arc', layer: 'negative', color: 5, center: [17, 18], radius: 19,
-          startAngle: 45, endAngle: -10,
-        },
-        {
-          type: 'text', layer: 'text', color: 6, point: [20, 21],
-          text: '部\nA', height: 5, rotation: -90,
-        },
-      ],
-    });
+  it('writes owned R2000 entities with direct ACI colors in input order', () => {
+    const layers = ['line', 'poly', 'circle', 'positive', 'negative', 'text'];
+    const geometries = [
+      { type: 'line', layer: 'line', color: 1, points: [[1, 2], [3, 4]] },
+      { type: 'polyline', layer: 'poly', color: 2, points: [[5, 6], [7, 8], [9, 10]] },
+      { type: 'circle', layer: 'circle', color: 3, center: [11, 12], radius: 13 },
+      {
+        type: 'arc', layer: 'positive', color: 4, center: [14, 15], radius: 16,
+        startAngle: -10, endAngle: 45,
+      },
+      {
+        type: 'arc', layer: 'negative', color: 5, center: [17, 18], radius: 19,
+        startAngle: 45, endAngle: -10,
+      },
+      {
+        type: 'text', layer: 'text', color: 6, point: [20, 21],
+        text: '部\nA', height: 5, rotation: -90,
+      },
+    ];
+    const text = joined({ layers, geometries });
+    const tags = parseDxfTags(text);
+    const entityRecords = records(sectionTags(tags, 'ENTITIES'));
 
-    expect(section(text, 'ENTITIES')).toBe(
-      '0\nLINE\n8\nline\n62\n1\n10\n1\n20\n2\n30\n0\n11\n3\n21\n4\n31\n0\n'
-      + '0\nLWPOLYLINE\n8\npoly\n62\n2\n90\n3\n70\n0\n10\n5\n20\n6\n10\n7\n20\n8\n10\n9\n20\n10\n'
-      + '0\nCIRCLE\n8\ncircle\n62\n3\n10\n11\n20\n12\n30\n0\n40\n13\n'
-      + '0\nARC\n8\npositive\n62\n4\n10\n14\n20\n15\n30\n0\n40\n16\n50\n350\n51\n45\n'
-      + '0\nARC\n8\nnegative\n62\n5\n10\n17\n20\n18\n30\n0\n40\n19\n50\n350\n51\n45\n'
-      + '0\nTEXT\n8\ntext\n62\n6\n10\n20\n20\n21\n30\n0\n40\n5\n1\n\\U+90E8 A\n50\n-90\n',
-    );
+    expect(entityRecords.map(record => record.type))
+      .toEqual(['LINE', 'LWPOLYLINE', 'CIRCLE', 'ARC', 'ARC', 'TEXT']);
+
+    const expectedSubclasses = {
+      LINE: ['AcDbEntity', 'AcDbLine'],
+      LWPOLYLINE: ['AcDbEntity', 'AcDbPolyline'],
+      CIRCLE: ['AcDbEntity', 'AcDbCircle'],
+      ARC: ['AcDbEntity', 'AcDbCircle', 'AcDbArc'],
+      TEXT: ['AcDbEntity', 'AcDbText', 'AcDbText'],
+    };
+    const modelSpace = records(sectionTags(tags, 'TABLES')).find(record => (
+      record.type === 'BLOCK_RECORD' && recordValues(record, 2)[0] === '*Model_Space'
+    ));
+    const modelSpaceHandle = recordValues(modelSpace, 5)[0];
+    for (const record of entityRecords) {
+      expect(recordValues(record, 5)).toHaveLength(1);
+      expect(recordValues(record, 330)).toEqual([modelSpaceHandle]);
+      expect(recordValues(record, 100)).toEqual(expectedSubclasses[record.type]);
+      expect(recordValues(record, 8)).toHaveLength(1);
+      expect(recordValues(record, 62)).toHaveLength(1);
+    }
+    expect(new Set(entityRecords.flatMap(record => recordValues(record, 5))).size)
+      .toBe(entityRecords.length);
+    expect(entityRecords.map(record => recordValues(record, 8)[0])).toEqual(layers);
+    expect(entityRecords.map(record => recordValues(record, 62)[0]))
+      .toEqual(['1', '2', '3', '4', '5', '6']);
+
+    const [line, polyline, circle, positiveArc, negativeArc, textEntity] = entityRecords;
+    expect(recordValues(line, 10)).toEqual(['1']);
+    expect(recordValues(line, 20)).toEqual(['2']);
+    expect(recordValues(line, 11)).toEqual(['3']);
+    expect(recordValues(line, 21)).toEqual(['4']);
+    expect(recordValues(polyline, 90)).toEqual(['3']);
+    expect(recordValues(polyline, 10)).toEqual(['5', '7', '9']);
+    expect(recordValues(polyline, 20)).toEqual(['6', '8', '10']);
+    expect(recordValues(circle, 10)).toEqual(['11']);
+    expect(recordValues(circle, 20)).toEqual(['12']);
+    expect(recordValues(circle, 40)).toEqual(['13']);
+    expect(recordValues(positiveArc, 50)).toEqual(['350']);
+    expect(recordValues(positiveArc, 51)).toEqual(['45']);
+    expect(recordValues(negativeArc, 50)).toEqual(['350']);
+    expect(recordValues(negativeArc, 51)).toEqual(['45']);
+    expect(recordValues(textEntity, 10)).toEqual(['20']);
+    expect(recordValues(textEntity, 20)).toEqual(['21']);
+    expect(recordValues(textEntity, 40)).toEqual(['5']);
+    expect(recordValues(textEntity, 1)).toEqual(['\\U+90E8 A']);
+    expect(recordValues(textEntity, 50)).toEqual(['-90']);
+
+    const positiveArcTags = positiveArc.tags.map(tag => [tag.code, tag.value]);
+    expect(positiveArcTags.indexOf(positiveArcTags.find(tag => tag[1] === 'AcDbCircle')))
+      .toBeLessThan(positiveArcTags.findIndex(tag => tag[0] === 10));
+    expect(positiveArcTags.indexOf(positiveArcTags.find(tag => tag[1] === 'AcDbArc')))
+      .toBeLessThan(positiveArcTags.findIndex(tag => tag[0] === 50));
+    const textTags = textEntity.tags.map(tag => [tag.code, tag.value]);
+    expect(textTags.at(-1)).toEqual([100, 'AcDbText']);
   });
 
   it('swaps negative-sweep arc angles before normalization', () => {
