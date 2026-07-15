@@ -133,11 +133,7 @@ export function validateRawDxfGraph(tags) {
       throw new RangeError(`${name} table count does not match its records`);
     }
     const tableHandle = [...recordValues(table, 5), ...recordValues(table, 105)][0];
-    if (name === 'DIMSTYLE') {
-      if (recordValues(table, 105).length !== 1 || recordValues(table, 5).length !== 0) {
-        throw new RangeError('DIMSTYLE table must use exactly one group 105 handle');
-      }
-    } else if (recordValues(table, 5).length !== 1 || recordValues(table, 105).length !== 0) {
+    if (recordValues(table, 5).length !== 1 || recordValues(table, 105).length !== 0) {
       throw new RangeError(`${name} table must use exactly one group 5 handle`);
     }
     for (const entry of entries) {

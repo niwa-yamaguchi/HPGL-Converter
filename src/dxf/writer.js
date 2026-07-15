@@ -271,8 +271,7 @@ function writeHeader(chunks, graph) {
 
 function writeTableStart(chunks, graph, name, size) {
   pushPairs(chunks, [
-    [0, 'TABLE'], [2, name],
-    [name === 'DIMSTYLE' ? 105 : 5, graph.tables[name]], [330, 0],
+    [0, 'TABLE'], [2, name], [5, graph.tables[name]], [330, 0],
     [100, 'AcDbSymbolTable'], [70, size],
   ]);
   if (name === 'DIMSTYLE') {

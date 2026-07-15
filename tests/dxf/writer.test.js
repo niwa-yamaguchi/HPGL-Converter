@@ -96,8 +96,8 @@ describe('writeDxf structure', () => {
       .toEqual(['DICTIONARY', 'DICTIONARY', 'DICTIONARY', 'LAYOUT', 'LAYOUT']);
 
     const dimstyle = tables(tags).find(table => table.name === 'DIMSTYLE').table;
-    expect(recordValues(dimstyle, 105)).toHaveLength(1);
-    expect(recordValues(dimstyle, 5)).toHaveLength(0);
+    expect(recordValues(dimstyle, 5)).toHaveLength(1);
+    expect(recordValues(dimstyle, 105)).toHaveLength(0);
   });
 
   it('links the root dictionary to an ACAD_LAYOUT dictionary in raw tags', () => {
