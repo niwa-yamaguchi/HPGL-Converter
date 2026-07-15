@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { writeDxf } from '../../src/dxf/writer.js';
 import {
-  parseDxfTags, recordValues, records, sectionTags, validateHandleGraph,
+  parseDxfTags, recordValues, records, sectionTags, tables,
+  validateHandleGraph, validateRawDxfGraph,
 } from './dxf-tags.js';
 
 function joined(input) {
@@ -78,7 +79,7 @@ describe('writeDxf structure', () => {
     const header = sectionTags(tags, 'HEADER');
     const handseedVariable = header.findIndex(tag => tag.code === 9 && tag.value === '$HANDSEED');
     const handseed = header[handseedVariable + 1];
-    validateHandleGraph(tags);
+    validateRawDxfGraph(tags);
     expect(handseed).toEqual({ code: 5, value: expect.any(String) });
     const assignedHandles = tags
       .filter(tag => (tag.code === 5 || tag.code === 105) && tag !== handseed)
@@ -92,7 +93,45 @@ describe('writeDxf structure', () => {
     expect(blockRecords.map(record => record.type)).toEqual(['BLOCK', 'ENDBLK', 'BLOCK', 'ENDBLK']);
     expect(records(sectionTags(tags, 'ENTITIES'))).toEqual([]);
     expect(records(sectionTags(tags, 'OBJECTS')).map(record => record.type))
-      .toEqual(['DICTIONARY', 'DICTIONARY']);
+      .toEqual(['DICTIONARY', 'DICTIONARY', 'DICTIONARY', 'LAYOUT', 'LAYOUT']);
+
+    const dimstyle = tables(tags).find(table => table.name === 'DIMSTYLE').table;
+    expect(recordValues(dimstyle, 105)).toHaveLength(1);
+    expect(recordValues(dimstyle, 5)).toHaveLength(0);
+  });
+
+  it('links the root dictionary to an ACAD_LAYOUT dictionary in raw tags', () => {
+    const objectRecords = records(sectionTags(
+      parseDxfTags(joined({ layers: [], geometries: [] })),
+      'OBJECTS',
+    ));
+    const root = objectRecords.find(record => recordValues(record, 330)[0] === '0');
+
+    expect(recordValues(root, 3)).toContain('ACAD_LAYOUT');
+    expect(objectRecords.filter(record => record.type === 'DICTIONARY')).toHaveLength(3);
+  });
+
+  it('emits owned Model and Layout1 LAYOUT objects in raw tags', () => {
+    const objectRecords = records(sectionTags(
+      parseDxfTags(joined({ layers: [], geometries: [] })),
+      'OBJECTS',
+    ));
+    const layouts = objectRecords.filter(record => record.type === 'LAYOUT');
+
+    expect(layouts.map(record => recordValues(record, 1).at(-1))).toEqual(['Model', 'Layout1']);
+    expect(layouts.every(record => recordValues(record, 330).length === 2)).toBe(true);
+  });
+
+  it('emits reciprocal BLOCK_RECORD to LAYOUT group 340 references in raw tags', () => {
+    const blockRecords = records(sectionTags(
+      parseDxfTags(joined({ layers: [], geometries: [] })),
+      'TABLES',
+    )).filter(record => record.type === 'BLOCK_RECORD');
+
+    expect(blockRecords.map(record => recordValues(record, 340))).toEqual([
+      [expect.any(String)],
+      [expect.any(String)],
+    ]);
   });
 
   it.each([
@@ -105,7 +144,16 @@ describe('writeDxf structure', () => {
     },
   ])('writes a resolvable handle graph for %#', input => {
     const tags = parseDxfTags(joined(input));
-    expect(() => validateHandleGraph(tags)).not.toThrow();
+    expect(() => validateRawDxfGraph(tags)).not.toThrow();
+  });
+
+  it('does not treat HEADER HANDSEED as an assigned object handle', () => {
+    const tags = parseDxfTags(joined({ layers: [], geometries: [] }));
+    const header = sectionTags(tags, 'HEADER');
+    const handseedIndex = header.findIndex(tag => tag.code === 9 && tag.value === '$HANDSEED');
+    const handseed = header[handseedIndex + 1].value;
+
+    expect(validateHandleGraph(tags).handles.has(handseed)).toBe(false);
   });
 
   it('rejects duplicate handles in the handle graph validator', () => {

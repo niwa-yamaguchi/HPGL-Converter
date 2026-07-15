@@ -6,7 +6,7 @@ import { escapeDxfText } from '../../src/dxf/escape.js';
 import { assignLayerNames } from '../../src/files/layer-names.js';
 import { parseHpgl } from '../../src/hpgl/parser.js';
 import {
-  parseDxfTags, recordValues, records, sectionTags, validateHandleGraph,
+  parseDxfTags, recordValues, records, sectionTags, validateRawDxfGraph,
 } from '../dxf/dxf-tags.js';
 
 const REFERENCE_DIRECTORY = fileURLToPath(new URL('../../reference/', import.meta.url));
@@ -43,6 +43,100 @@ function entityPairs(dxf) {
     pairs.push({ code: Number(lines[index]), value: lines[index + 1] });
   }
   return pairs;
+}
+
+function normalizedAngle(angle) {
+  const normalized = ((angle % 360) + 360) % 360;
+  return Object.is(normalized, -0) ? 0 : normalized;
+}
+
+function canonicalGeometry(geometry) {
+  const common = {
+    layer: escapeDxfText(geometry.layer),
+    color: geometry.color,
+  };
+  switch (geometry.type) {
+    case 'line':
+      return { type: 'LINE', ...common, values: [...geometry.points[0], 0, ...geometry.points[1], 0] };
+    case 'polyline':
+      return {
+        type: 'LWPOLYLINE', ...common,
+        values: [geometry.points.length, 0, ...geometry.points.flat()],
+      };
+    case 'circle':
+      return { type: 'CIRCLE', ...common, values: [...geometry.center, 0, geometry.radius] };
+    case 'arc': {
+      const sweep = geometry.endAngle - geometry.startAngle;
+      const start = sweep > 0 ? geometry.startAngle : geometry.endAngle;
+      const end = sweep > 0 ? geometry.endAngle : geometry.startAngle;
+      return {
+        type: 'ARC', ...common,
+        values: [
+          ...geometry.center, 0, geometry.radius,
+          normalizedAngle(start), normalizedAngle(end),
+        ],
+      };
+    }
+    case 'text':
+      return {
+        type: 'TEXT', ...common,
+        values: [...geometry.point, 0, geometry.height, escapeDxfText(geometry.text), geometry.rotation],
+      };
+    default:
+      throw new TypeError(`Unknown reference geometry type: ${geometry.type}`);
+  }
+}
+
+function canonicalEntity(record) {
+  const common = {
+    layer: recordValues(record, 8)[0],
+    color: Number(recordValues(record, 62)[0]),
+  };
+  const numbers = code => recordValues(record, code).map(Number);
+  switch (record.type) {
+    case 'LINE':
+      return {
+        type: record.type, ...common,
+        values: [
+          ...numbers(10), ...numbers(20), ...numbers(30),
+          ...numbers(11), ...numbers(21), ...numbers(31),
+        ],
+      };
+    case 'LWPOLYLINE': {
+      const xs = numbers(10);
+      const ys = numbers(20);
+      return {
+        type: record.type, ...common,
+        values: [
+          ...numbers(90), ...numbers(70),
+          ...xs.flatMap((x, index) => [x, ys[index]]),
+        ],
+      };
+    }
+    case 'CIRCLE':
+      return {
+        type: record.type, ...common,
+        values: [...numbers(10), ...numbers(20), ...numbers(30), ...numbers(40)],
+      };
+    case 'ARC':
+      return {
+        type: record.type, ...common,
+        values: [
+          ...numbers(10), ...numbers(20), ...numbers(30), ...numbers(40),
+          ...numbers(50), ...numbers(51),
+        ],
+      };
+    case 'TEXT':
+      return {
+        type: record.type, ...common,
+        values: [
+          ...numbers(10), ...numbers(20), ...numbers(30), ...numbers(40),
+          recordValues(record, 1)[0], ...numbers(50),
+        ],
+      };
+    default:
+      throw new TypeError(`Unknown DXF entity type: ${record.type}`);
+  }
 }
 
 const missingReferences = await referenceAvailability();
@@ -113,12 +207,13 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
     result.files.reduce((total, file) => total + file.geometryCount, 0),
   );
   expect(entityTypes).toHaveLength(result.totals.geometryCount);
-  expect(() => validateHandleGraph(tags)).not.toThrow();
+  expect(() => validateRawDxfGraph(tags)).not.toThrow();
   expect(entityRecords).toHaveLength(result.totals.geometryCount);
   expect(entityRecords.every(entity => recordValues(entity, 5).length === 1)).toBe(true);
   expect(entityRecords.every(entity => recordValues(entity, 330).length === 1)).toBe(true);
   expect(entityRecords.every(entity => recordValues(entity, 100).includes('AcDbEntity')))
     .toBe(true);
+  expect(entityRecords.map(canonicalEntity)).toEqual(expectedGeometries.map(canonicalGeometry));
   expect(entityColors).toEqual(expectedGeometries.map(geometry => geometry.color));
   expect(entityColors.every(color => Number.isInteger(color) && color >= 1 && color <= 255))
     .toBe(true);

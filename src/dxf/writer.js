@@ -64,6 +64,9 @@ function allocateDocumentGraph(layers, geometryCount) {
   const objects = {
     rootDictionary: allocator.next(),
     acadGroup: allocator.next(),
+    acadLayout: allocator.next(),
+    modelLayout: allocator.next(),
+    paperLayout: allocator.next(),
   };
   const entities = Array.from({ length: geometryCount }, () => allocator.next());
   return { tables, records, blocks, objects, entities, handseed: allocator.peek() };
@@ -268,7 +271,8 @@ function writeHeader(chunks, graph) {
 
 function writeTableStart(chunks, graph, name, size) {
   pushPairs(chunks, [
-    [0, 'TABLE'], [2, name], [5, graph.tables[name]], [330, 0],
+    [0, 'TABLE'], [2, name],
+    [name === 'DIMSTYLE' ? 105 : 5, graph.tables[name]], [330, 0],
     [100, 'AcDbSymbolTable'], [70, size],
   ]);
   if (name === 'DIMSTYLE') {
@@ -358,10 +362,10 @@ function writeAppIdTable(chunks, graph) {
 function writeBlockRecordTable(chunks, graph) {
   writeTableStart(chunks, graph, 'BLOCK_RECORD', 2);
   writeTableRecord(chunks, graph, 'BLOCK_RECORD', 'BLOCK_RECORD', graph.records.modelSpace, [
-    [2, '*Model_Space'], [70, 0],
+    [2, '*Model_Space'], [70, 0], [340, graph.objects.modelLayout],
   ]);
   writeTableRecord(chunks, graph, 'BLOCK_RECORD', 'BLOCK_RECORD', graph.records.paperSpace, [
-    [2, '*Paper_Space'], [70, 0],
+    [2, '*Paper_Space'], [70, 0], [340, graph.objects.paperLayout],
   ]);
   writeTableEnd(chunks);
 }
@@ -409,10 +413,51 @@ function writeObjects(chunks, graph) {
     [0, 'DICTIONARY'], [5, graph.objects.rootDictionary], [330, 0],
     [100, 'AcDbDictionary'], [280, 0], [281, 1],
     [3, 'ACAD_GROUP'], [350, graph.objects.acadGroup],
+    [3, 'ACAD_LAYOUT'], [350, graph.objects.acadLayout],
     [0, 'DICTIONARY'], [5, graph.objects.acadGroup],
     [330, graph.objects.rootDictionary], [100, 'AcDbDictionary'],
     [280, 0], [281, 1],
+    [0, 'DICTIONARY'], [5, graph.objects.acadLayout],
+    [330, graph.objects.rootDictionary], [100, 'AcDbDictionary'],
+    [280, 0], [281, 1],
+    [3, 'Model'], [350, graph.objects.modelLayout],
+    [3, 'Layout1'], [350, graph.objects.paperLayout],
+  ]);
+  writeLayout(
+    chunks, graph.objects.modelLayout, graph.objects.acadLayout,
+    'Model', 0, 1024, graph.records.modelSpace,
+  );
+  writeLayout(
+    chunks, graph.objects.paperLayout, graph.objects.acadLayout,
+    'Layout1', 1, 0, graph.records.paperSpace,
+  );
+  pushPairs(chunks, [
     [0, 'ENDSEC'],
+  ]);
+}
+
+function writeLayout(chunks, handle, owner, name, tabOrder, plotFlags, blockRecord) {
+  pushPairs(chunks, [
+    [0, 'LAYOUT'], [5, handle], [330, owner],
+    [100, 'AcDbPlotSettings'],
+    [1, ''], [4, 'A3'], [6, ''],
+    [40, 7.5], [41, 20], [42, 7.5], [43, 20],
+    [44, 420], [45, 297],
+    [46, 0], [47, 0], [48, 0], [49, 0],
+    [140, 0], [141, 0], [142, 1], [143, 1],
+    [70, plotFlags], [72, 1], [73, 0], [74, 5], [7, ''],
+    [75, 16], [76, 0], [77, 2], [78, 300],
+    [147, 1], [148, 0], [149, 0],
+    [100, 'AcDbLayout'],
+    [1, name], [70, 1], [71, tabOrder],
+    [10, 0], [20, 0], [11, 420], [21, 297],
+    [12, 0], [22, 0], [32, 0],
+    [14, 1e20], [24, 1e20], [34, 1e20],
+    [15, -1e20], [25, -1e20], [35, -1e20],
+    [146, 0], [13, 0], [23, 0], [33, 0],
+    [16, 1], [26, 0], [36, 0],
+    [17, 0], [27, 1], [37, 0],
+    [76, 1], [330, blockRecord],
   ]);
 }
 

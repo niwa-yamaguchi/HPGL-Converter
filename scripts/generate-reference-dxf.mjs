@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { convertInputs } from '../src/converter.js';
 import { assignLayerNames } from '../src/files/layer-names.js';
+import { writeValidatedReferenceDxf } from './reference-dxf-output.mjs';
 
 const names = [
   'P-00235BH01.H01',
@@ -19,8 +20,9 @@ const inputs = await Promise.all(names.map(async (name, index) => ({
   data: new Uint8Array(await readFile(new URL(`../reference/${name}`, import.meta.url))),
 })));
 const result = await convertInputs(inputs, () => {});
-await writeFile(
+await writeValidatedReferenceDxf(
+  result,
   new URL('../hpgl-dxf-reference-8-files-r2000.dxf', import.meta.url),
-  new Uint8Array(result.buffer),
+  writeFile,
 );
 console.log(JSON.stringify(result.totals));
