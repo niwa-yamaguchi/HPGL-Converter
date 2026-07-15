@@ -107,7 +107,9 @@ DXFオブジェクトへ一意な大文字16進handleを割り当てる。割り
 
 ### OBJECTS
 
-root `DICTIONARY`と`ACAD_GROUP`子dictionaryを出力し、handleとowner参照を接続する。未使用または不明なobject ID 0を出力しない。
+root `DICTIONARY`に`ACAD_GROUP`と`ACAD_LAYOUT`の子dictionaryを登録し、両方のgroup 330 ownerをrootへ接続する。`ACAD_LAYOUT` dictionaryには`Model`と`Layout1`の2つの`LAYOUT` objectを登録し、各`LAYOUT`の先頭group 330 ownerを`ACAD_LAYOUT` dictionaryへ接続する。
+
+`*Model_Space`と`*Paper_Space`の各`BLOCK_RECORD`はgroup 340で対応する`LAYOUT`を参照し、各`LAYOUT`は`AcDbLayout`内の末尾group 330で対応する`BLOCK_RECORD`を参照する。この双方向参照を含むself-contained layout graphを出力し、root dictionaryのowner以外に未使用または不明なobject ID 0を出力しない。
 
 ## エラー処理
 
@@ -123,16 +125,19 @@ root `DICTIONARY`と`ACAD_GROUP`子dictionaryを出力し、handleとowner参照
 - handleが一意な大文字16進数として決定的に増える。
 - `$HANDSEED`が割当済みhandleより後を指す。
 - 必須sectionと標準tableが1回ずつ存在する。
-- table、record、block、dictionary、entityのowner参照先が存在する。
+- raw tagで各TABLEのgroup 70件数が実record数と一致し、各table recordのgroup 330 ownerが所属TABLEを指すことを検査する。
+- raw tagでroot dictionaryの`ACAD_LAYOUT`登録、`ACAD_LAYOUT` dictionaryのowner、`Model` / `Layout1`の`LAYOUT` objectとowner、および各`BLOCK_RECORD`のgroup 340と対応`LAYOUT`末尾group 330の相互参照を検査する。
+- block、dictionary、layout、entityを含む全handle参照先が存在する。
 - 全entityにhandle、owner、`AcDbEntity`、図形固有subclass markerがある。
 - 空DXFにも有効なVPORT、Model/Paper Space、root dictionaryがある。
 - 既存のレイヤー、Unicode、ACI、座標、円弧、TEXT、入力検証テストを維持する。
 
 ### 結合テスト
 
-- `reference`の8ファイルから生成したDXFの図形数、8レイヤー、ACI列、有限座標を従来どおり検査する。
-- 全handleの一意性と、全owner参照の解決を検査する。
-- 生成した代表DXFを`ezdxf audit`へ渡し、破損判定および修復項目が0件であることを確認する。
+- `reference`の8ファイルからDXFを生成し、8ファイル、53,842図形、エラー0件、警告0件であることを検査する。
+- 外部パーサへ渡す前にraw tagを解析し、全handleの一意性、group 330/340/350/360参照の解決、TABLE件数とowner、および`ACAD_LAYOUT` / `LAYOUT`のself-contained graphを検査する。
+- 53,842件の全entityを入力HPGLの期待図形と同じ順序でcanonical化し、type、layer、ACI、および型固有のgeometryまたはtextを全件比較する。
+- raw graphと全entityのcanonical比較が完了した後に、生成した代表DXFを`ezdxf audit`へ渡し、破損判定および修復項目が0件であることを確認する。
 - 全VitestとVite本番ビルドを実行する。
 
 ### BricsCAD V24
