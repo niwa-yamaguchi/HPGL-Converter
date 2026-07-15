@@ -101,6 +101,7 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
     .map(pair => Number(pair.value));
 
   expect(result.totals.fileCount).toBe(8);
+  expect(result.totals.geometryCount).toBe(53842);
   expect(result.totals.errorCount).toBe(0);
   expect(result.totals.warningCount).toBe(0);
   expect(result.files).toHaveLength(8);
