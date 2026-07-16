@@ -5,6 +5,8 @@ import { expect, it } from 'vitest';
 import { convertInputs } from '../../src/converter.js';
 import { escapeDxfText } from '../../src/dxf/escape.js';
 import { assignLayerNames } from '../../src/files/layer-names.js';
+import { parseHpgl } from '../../src/hpgl/parser.js';
+import { combinedBounds, fitViewport } from '../../src/viewer/geometry.js';
 import {
   parseDxfTags, recordValues, records, sectionTags, validateRawDxfGraph,
 } from '../dxf/dxf-tags.js';
@@ -144,6 +146,19 @@ it.skipIf(missingReferences.length > 0)(testName, async () => {
     data: new Uint8Array(await readFile(new URL(`../../reference/${name}`, import.meta.url))),
   })));
   const result = await convertInputs(inputs, () => {});
+  const previewFiles = inputs.map(input => parseHpgl(input.data, {
+    fileName: input.name,
+    layerName: input.layerName,
+  }));
+  const previewGeometries = previewFiles.flatMap(file => file.geometries);
+  const previewBounds = combinedBounds(previewGeometries);
+  const previewViewport = fitViewport(previewBounds, 1200, 720, 12);
+
+  expect(previewGeometries).toHaveLength(result.totals.geometryCount);
+  expect(Object.values(previewBounds).every(Number.isFinite)).toBe(true);
+  expect(Object.values(previewViewport).every(Number.isFinite)).toBe(true);
+  expect(previewViewport.scale).toBeGreaterThan(0);
+
   const dxf = new TextDecoder().decode(result.buffer);
   const tags = parseDxfTags(dxf);
   const entityRecords = records(sectionTags(tags, 'ENTITIES'));
