@@ -434,6 +434,7 @@ export function mountApp(root, deps = {}) {
     state.compareB = 1;
     renderPreviewControls();
     renderFiles();
+    fitPreview();
 
     if (state.files.length === 0) {
       setPreviewStatus('idle', 'ファイルを追加すると自動表示します。');

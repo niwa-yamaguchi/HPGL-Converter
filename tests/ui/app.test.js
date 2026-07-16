@@ -260,6 +260,31 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="viewer-controls"]').textContent).toContain('second.hpgl');
   });
 
+  it('clears the canvas while a replacement preview is pending', async () => {
+    const jobs = [deferredJob(), deferredJob()];
+    let requestIndex = 0;
+    const renderViewer = vi.fn();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => jobs[requestIndex++]),
+      renderViewer,
+    });
+    const first = hpglFile('first.hpgl');
+    const second = hpglFile('second.hpgl', 'PU;', { lastModified: 456 });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [first]);
+    jobs[0].resolve(previewResult([first]));
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[1]).toHaveLength(1));
+    renderViewer.mockClear();
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [second]);
+
+    await vi.waitFor(() => expect(renderViewer).toHaveBeenCalledWith(
+      document.querySelector('[data-testid="viewer-canvas"]'),
+      [],
+      expect.any(Object),
+    ));
+  });
+
   it('clears stale preview counts before reparsing and after a preview failure', async () => {
     const firstJob = deferredJob();
     const secondJob = deferredJob();
