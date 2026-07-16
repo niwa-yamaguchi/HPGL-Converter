@@ -10,7 +10,10 @@ import { createConversionJob as createDefaultConversionJob } from './worker/work
 
 const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .plt / .h01〜.h99';
 const MAX_VISIBLE_DIAGNOSTICS = 100;
-const VIEWER_COLORS = ['#2f80ed', '#e67e22', '#27ae60', '#9b51e0', '#eb5757', '#00a6a6'];
+const VIEWER_COLORS = [
+  '#2f80ed', '#e67e22', '#27ae60', '#9b51e0',
+  '#eb5757', '#00a6a6', '#f2c94c', '#f299c2',
+];
 
 function formatFileSize(bytes) {
   if (bytes < 1024) {
@@ -44,6 +47,7 @@ export function mountApp(root, deps = {}) {
   const createConversionJob = deps.createConversionJob ?? createDefaultConversionJob;
   const createPreviewJob = deps.createPreviewJob ?? createDefaultPreviewJob;
   const renderViewer = deps.renderViewer ?? renderDefaultViewer;
+  const compareGeometries = deps.compareGeometrySets ?? compareGeometrySets;
   if (typeof createConversionJob !== 'function') {
     throw new TypeError('createConversionJob must be a function');
   }
@@ -52,6 +56,9 @@ export function mountApp(root, deps = {}) {
   }
   if (typeof renderViewer !== 'function') {
     throw new TypeError('renderViewer must be a function');
+  }
+  if (typeof compareGeometries !== 'function') {
+    throw new TypeError('compareGeometrySets must be a function');
   }
 
   root.innerHTML = `
@@ -200,6 +207,7 @@ export function mountApp(root, deps = {}) {
     viewerMode: 'normal',
     compareA: 0,
     compareB: 1,
+    diffComparisonCache: null,
     viewport: fitViewport(null, 1, 1),
     frameRequest: null,
     destroyed: false,
@@ -231,19 +239,32 @@ export function mountApp(root, deps = {}) {
     };
   }
 
-  function viewerGroups() {
-    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
-      const a = state.previewFiles[state.compareA];
-      const b = state.previewFiles[state.compareB];
-      if (!a || !b || state.compareA === state.compareB) {
-        return [];
-      }
-      const difference = compareGeometrySets(a.geometries, b.geometries);
-      return [
+  function currentDiffComparison() {
+    const a = state.previewFiles[state.compareA];
+    const b = state.previewFiles[state.compareB];
+    if (!a || !b || state.compareA === state.compareB) {
+      return null;
+    }
+    if (state.diffComparisonCache?.a === a && state.diffComparisonCache?.b === b) {
+      return state.diffComparisonCache;
+    }
+    const difference = compareGeometries(a.geometries, b.geometries);
+    state.diffComparisonCache = {
+      a,
+      b,
+      difference,
+      groups: [
         { color: '#2574a9', opacity: 0.9, geometries: difference.onlyA },
         { color: '#98a2ad', opacity: 0.72, geometries: difference.common },
         { color: '#d97706', opacity: 0.9, geometries: difference.onlyB },
-      ];
+      ],
+    };
+    return state.diffComparisonCache;
+  }
+
+  function viewerGroups() {
+    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
+      return currentDiffComparison()?.groups ?? [];
     }
     return state.previewFiles
       .map((file, index) => ({ file, index }))
@@ -323,10 +344,7 @@ export function mountApp(root, deps = {}) {
       bSelect.dataset.testid = 'viewer-compare-b';
       appendCompareOptions(bSelect, state.compareB);
       bLabel.append(bSelect);
-      const difference = compareGeometrySets(
-        state.previewFiles[state.compareA].geometries,
-        state.previewFiles[state.compareB].geometries,
-      );
+      const difference = currentDiffComparison().difference;
       const counts = element(
         'p',
         'viewer-diff-counts',
@@ -388,6 +406,7 @@ export function mountApp(root, deps = {}) {
     state.visiblePreviewFiles = new Set(state.previewFiles.map((_file, index) => index));
     state.compareA = 0;
     state.compareB = 1;
+    state.diffComparisonCache = null;
     if (state.viewerMode === 'diff' && state.previewFiles.length < 2) {
       state.viewerMode = 'normal';
     }
@@ -404,6 +423,7 @@ export function mountApp(root, deps = {}) {
     state.previewJob = null;
     state.previewFiles = [];
     state.visiblePreviewFiles.clear();
+    state.diffComparisonCache = null;
     state.viewerMode = 'normal';
     const cancelled = error?.name === 'AbortError';
     const message = error instanceof Error && error.message ? error.message : '不明なエラー';
@@ -432,6 +452,7 @@ export function mountApp(root, deps = {}) {
     state.viewerMode = 'normal';
     state.compareA = 0;
     state.compareB = 1;
+    state.diffComparisonCache = null;
     renderPreviewControls();
     renderFiles();
     fitPreview();

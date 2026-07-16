@@ -221,9 +221,11 @@ export function fitViewport(bounds, width, height, padding = 12) {
   assertFinite(height, 'height');
   assertFinite(padding, 'padding');
   if (!bounds) return { centerX: 0, centerY: 0, scale: 1, width, height };
+  const spanX = bounds.maxX - bounds.minX;
+  const spanY = bounds.maxY - bounds.minY;
   const scale = clamp(Math.min(
-    Math.max(1, width - 2 * padding) / Math.max(1, bounds.maxX - bounds.minX),
-    Math.max(1, height - 2 * padding) / Math.max(1, bounds.maxY - bounds.minY),
+    Math.max(1, width - 2 * padding) / (spanX === 0 ? 1 : spanX),
+    Math.max(1, height - 2 * padding) / (spanY === 0 ? 1 : spanY),
   ), VIEWPORT_MIN_SCALE, VIEWPORT_MAX_SCALE);
   return {
     centerX: bounds.minX / 2 + bounds.maxX / 2,

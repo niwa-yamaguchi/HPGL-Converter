@@ -48,6 +48,12 @@ describe('viewer geometry', () => {
     expect(panned.centerX).not.toBe(zoomed.centerX);
   });
 
+  it('fits a positive sub-millimeter span to the available area', () => {
+    const fitted = fitViewport({ minX: 0, minY: 0, maxX: 0.1, maxY: 0.1 }, 100, 100, 10);
+
+    expect(fitted.scale).toBe(800);
+  });
+
   it('rejects invalid geometry arrays, types, coordinates, and sizes', () => {
     expect(() => geometryKey(null)).toThrow(TypeError);
     expect(() => geometryKey(line([[0, 0], [Number.NaN, 1]]))).toThrow(RangeError);
