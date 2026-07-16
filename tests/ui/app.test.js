@@ -36,6 +36,29 @@ function deferredJob() {
   return { promise, cancel: vi.fn(), resolve, reject };
 }
 
+function line(points) {
+  return { type: 'line', points };
+}
+
+const emptyPreviewJob = vi.fn(() => ({
+  promise: Promise.resolve({ files: [] }),
+  cancel: vi.fn(),
+}));
+
+function previewResult(files) {
+  return {
+    files: files.map((file, index) => ({
+      name: file.name,
+      layerName: file.name.replace(/\.[^.]+$/, ''),
+      geometries: [line([[index, 0], [index + 1, 1]])],
+      geometryCount: 1,
+      errorCount: 0,
+      warningCount: 0,
+      diagnostics: [],
+    })),
+  };
+}
+
 function result({ errors = 0, warnings = 0, diagnostics = [] } = {}) {
   return {
     buffer: new Uint8Array([0, 1, 2]).buffer,
@@ -59,20 +82,36 @@ function result({ errors = 0, warnings = 0, diagnostics = [] } = {}) {
 describe('mountApp', () => {
   let mounted;
 
+  function mount(deps = {}) {
+    mounted = mountApp(document.querySelector('#test-root'), {
+      createPreviewJob: emptyPreviewJob,
+      renderViewer: vi.fn(),
+      ...deps,
+    });
+    return mounted;
+  }
+
   beforeEach(() => {
     document.body.innerHTML = '<div id="test-root"></div>';
     URL.createObjectURL = vi.fn(() => 'blob:test-download');
     URL.revokeObjectURL = vi.fn();
+    emptyPreviewJob.mockClear();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(callback => {
+      queueMicrotask(() => callback(0));
+      return 1;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
   });
 
   afterEach(() => {
     mounted?.destroy();
     mounted = undefined;
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('shows the private local workflow with one native file-picker tab stop', () => {
-    mounted = mountApp(document.querySelector('#test-root'), { createConversionJob: vi.fn() });
+    mount({ createConversionJob: vi.fn() });
 
     expect(document.body.textContent).toContain('HPGL → DXF Converter');
     expect(document.body.textContent).toContain('ファイルは外部へ送信されません');
@@ -106,7 +145,7 @@ describe('mountApp', () => {
   });
 
   it('adds supported files while rejecting unsupported and duplicate files with a notice', () => {
-    mounted = mountApp(document.querySelector('#test-root'), { createConversionJob: vi.fn() });
+    mount({ createConversionJob: vi.fn() });
     const input = document.querySelector('[data-testid="file-input"]');
     const supported = hpglFile('drawing.H01');
 
@@ -121,7 +160,7 @@ describe('mountApp', () => {
   });
 
   it('adds dropped files and recomputes case-insensitive layer suffixes after removal', () => {
-    mounted = mountApp(document.querySelector('#test-root'), { createConversionJob: vi.fn() });
+    mount({ createConversionJob: vi.fn() });
     const zone = document.querySelector('[data-testid="drop-zone"]');
 
     dropFiles(zone, [hpglFile('sample.hpgl'), hpglFile('SAMPLE.plt', 'PU;', { lastModified: 456 })]);
@@ -135,13 +174,194 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="file-row"]').textContent).not.toContain('SAMPLE_2');
   });
 
+  it('automatically previews added files with colors and hides unchecked layers', async () => {
+    const createPreviewJob = vi.fn((files, _layers, options) => ({
+      promise: Promise.resolve(previewResult(files)),
+      cancel: vi.fn(),
+      options,
+    }));
+    const renderViewer = vi.fn();
+    mount({ createConversionJob: vi.fn(), createPreviewJob, renderViewer });
+    const files = [hpglFile('first.hpgl'), hpglFile('second.plt', 'PU;', { lastModified: 456 })];
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
+
+    expect(createPreviewJob).toHaveBeenCalledWith(
+      files,
+      ['first', 'second'],
+      expect.objectContaining({ onProgress: expect.any(Function) }),
+    );
+    await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="viewer-layer-toggle"]')).toHaveLength(2));
+    expect(document.querySelector('[data-testid="viewer-controls"]').textContent).toContain('first.hpgl');
+    expect(document.querySelector('[data-testid="viewer-controls"]').textContent).toContain('図形 1');
+    expect(document.querySelectorAll('.viewer-swatch')).toHaveLength(2);
+    await vi.waitFor(() => expect(renderViewer).toHaveBeenCalled());
+    expect(renderViewer.mock.lastCall[1]).toHaveLength(2);
+
+    document.querySelector('[data-testid="viewer-layer-toggle"]').click();
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[1]).toHaveLength(1));
+    expect(renderViewer.mock.lastCall[1][0].geometries).toEqual(previewResult(files).files[1].geometries);
+    expect(renderViewer.mock.lastCall[1][0].color).toBe('#e67e22');
+  });
+
+  it('compares two different files as multisets in diff mode', async () => {
+    const common = line([[0, 0], [1, 1]]);
+    const onlyA = line([[2, 0], [3, 1]]);
+    const onlyB = line([[4, 0], [5, 1]]);
+    const preview = {
+      files: [
+        { ...previewResult([hpglFile('a.hpgl')]).files[0], geometries: [common, onlyA], geometryCount: 2 },
+        { ...previewResult([hpglFile('b.hpgl')]).files[0], geometries: [common, onlyB], geometryCount: 2 },
+      ],
+    };
+    const renderViewer = vi.fn();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({ promise: Promise.resolve(preview), cancel: vi.fn() })),
+      renderViewer,
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('a.hpgl'),
+      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
+    ]);
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-mode-diff"]').disabled).toBe(false));
+
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+
+    const compareA = document.querySelector('[data-testid="viewer-compare-a"]');
+    const compareB = document.querySelector('[data-testid="viewer-compare-b"]');
+    expect(compareA.value).not.toBe(compareB.value);
+    expect(document.querySelector('[data-testid="viewer-diff-counts"]').textContent)
+      .toBe('Aのみ 1 / 共通 1 / Bのみ 1');
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[1].map(group => group.geometries.length)).toEqual([1, 1, 1]));
+  });
+
+  it('cancels the previous preview and ignores its stale completion', async () => {
+    const jobs = [deferredJob(), deferredJob()];
+    const requests = [];
+    const createPreviewJob = vi.fn(files => {
+      requests.push(files);
+      return jobs[requests.length - 1];
+    });
+    mount({ createConversionJob: vi.fn(), createPreviewJob });
+    const first = hpglFile('first.hpgl');
+    const second = hpglFile('second.hpgl', 'PU;', { lastModified: 456 });
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [first]);
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [second]);
+
+    expect(jobs[0].cancel).toHaveBeenCalledOnce();
+    jobs[1].resolve(previewResult([first, second]));
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-controls"]').textContent).toContain('second.hpgl'));
+    jobs[0].resolve(previewResult([hpglFile('obsolete.hpgl')]));
+    await flush();
+    expect(document.querySelector('[data-testid="viewer-controls"]').textContent).not.toContain('obsolete.hpgl');
+    expect(document.querySelector('[data-testid="viewer-controls"]').textContent).toContain('second.hpgl');
+  });
+
+  it('clears stale preview counts before reparsing and after a preview failure', async () => {
+    const firstJob = deferredJob();
+    const secondJob = deferredJob();
+    const jobs = [firstJob, secondJob];
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => jobs.shift()),
+    });
+    const files = [
+      hpglFile('first.hpgl'),
+      hpglFile('second.hpgl', 'PU;', { lastModified: 456 }),
+    ];
+    const parsed = previewResult(files);
+    parsed.files[0].geometryCount = 7;
+    parsed.files[1].geometryCount = 9;
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
+    firstJob.resolve(parsed);
+    await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="file-row"]')[0].children[4].textContent).toBe('7'));
+
+    document.querySelectorAll('[data-testid="remove-button"]')[0].click();
+
+    expect(document.querySelector('[data-testid="file-row"]').children[4].textContent).toBe('0');
+    secondJob.reject(new Error('preview crashed'));
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-status"]').textContent).toContain('preview crashed'));
+    expect(document.querySelector('[data-testid="file-row"]').children[4].textContent).toBe('0');
+    expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(false);
+  });
+
+  it('refits and redraws the viewer when its canvas is resized', async () => {
+    let resizeCallback;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback) {
+        resizeCallback = callback;
+      }
+
+      observe = observe;
+      disconnect = disconnect;
+    });
+    let width = 800;
+    let height = 480;
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      width, height, left: 0, top: 0, right: width, bottom: height, x: 0, y: 0, toJSON() {},
+    }));
+    const renderViewer = vi.fn();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(files => ({ promise: Promise.resolve(previewResult(files)), cancel: vi.fn() })),
+      renderViewer,
+    });
+    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
+    expect(observe).toHaveBeenCalledWith(canvas);
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[2]).toEqual(expect.objectContaining({ width: 800, height: 480 })));
+
+    width = 400;
+    height = 280;
+    resizeCallback();
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[2]).toEqual(expect.objectContaining({ width: 400, height: 280 })));
+    mounted.destroy();
+    mounted = undefined;
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('cancels an active preview job when destroyed', () => {
+    const job = deferredJob();
+    mount({ createConversionJob: vi.fn(), createPreviewJob: () => job });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
+
+    mounted.destroy();
+    mounted = undefined;
+
+    expect(job.cancel).toHaveBeenCalledOnce();
+  });
+
+  it('finishes all cleanup even when job cancellation throws during destroy', () => {
+    const conversionJob = deferredJob();
+    conversionJob.cancel.mockImplementation(() => {
+      throw new Error('conversion cancel failed');
+    });
+    const previewJob = deferredJob();
+    mount({ createConversionJob: () => conversionJob, createPreviewJob: () => previewJob });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
+    document.querySelector('[data-testid="convert-button"]').click();
+
+    expect(() => mounted.destroy()).not.toThrow();
+    mounted = undefined;
+
+    expect(conversionJob.cancel).toHaveBeenCalledOnce();
+    expect(previewJob.cancel).toHaveBeenCalledOnce();
+    expect(document.querySelector('#test-root').children).toHaveLength(0);
+  });
+
   it('disables mutable controls during conversion and renders progress', async () => {
     const job = deferredJob();
     const createConversionJob = vi.fn((files, layers, options) => {
       job.options = options;
       return job;
     });
-    mounted = mountApp(document.querySelector('#test-root'), { createConversionJob });
+    mount({ createConversionJob });
     setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
 
     document.querySelector('[data-testid="convert-button"]').click();
@@ -182,7 +402,7 @@ describe('mountApp', () => {
       promise: Promise.resolve(result({ errors: 53, warnings: 52, diagnostics })),
       cancel: vi.fn(),
     }));
-    mounted = mountApp(document.querySelector('#test-root'), { createConversionJob });
+    mount({ createConversionJob });
     setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
 
     document.querySelector('[data-testid="convert-button"]').click();
@@ -197,7 +417,7 @@ describe('mountApp', () => {
 
   it('downloads with a normalized name and revokes the temporary Blob URL', async () => {
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    mounted = mountApp(document.querySelector('#test-root'), {
+    mount({
       createConversionJob: () => ({ promise: Promise.resolve(result()), cancel: vi.fn() }),
     });
     setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
@@ -224,7 +444,7 @@ describe('mountApp', () => {
       .mockReset()
       .mockReturnValueOnce('blob:first-download')
       .mockReturnValueOnce('blob:second-download');
-    mounted = mountApp(document.querySelector('#test-root'), {
+    mount({
       createConversionJob: () => {
         const job = deferredJob();
         jobs.push(job);
@@ -270,7 +490,7 @@ describe('mountApp', () => {
   });
 
   it('restores controls without a download after a fatal conversion error', async () => {
-    mounted = mountApp(document.querySelector('#test-root'), {
+    mount({
       createConversionJob: () => ({ promise: Promise.reject(new Error('worker crashed')), cancel: vi.fn() }),
     });
     setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
@@ -286,7 +506,7 @@ describe('mountApp', () => {
   it('cancels the active job and restores the retained inputs and settings', async () => {
     const job = deferredJob();
     job.cancel.mockImplementation(() => job.reject(new DOMException('Conversion cancelled', 'AbortError')));
-    mounted = mountApp(document.querySelector('#test-root'), { createConversionJob: () => job });
+    mount({ createConversionJob: () => job });
     setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
     document.querySelector('[data-testid="output-name"]').value = 'retained.dxf';
     document.querySelector('[data-testid="convert-button"]').click();

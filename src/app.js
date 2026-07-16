@@ -1,10 +1,16 @@
 import './styles.css';
 import { fileIdentity, isSupportedHpglName, normalizeOutputName } from './files/file-policy.js';
 import { assignLayerNames } from './files/layer-names.js';
+import { renderViewer as renderDefaultViewer } from './viewer/canvas-renderer.js';
+import {
+  combinedBounds, compareGeometrySets, fitViewport, panViewport, zoomViewport,
+} from './viewer/geometry.js';
+import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-client.js';
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
 
 const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .plt / .h01〜.h99';
 const MAX_VISIBLE_DIAGNOSTICS = 100;
+const VIEWER_COLORS = ['#2f80ed', '#e67e22', '#27ae60', '#9b51e0', '#eb5757', '#00a6a6'];
 
 function formatFileSize(bytes) {
   if (bytes < 1024) {
@@ -36,8 +42,16 @@ export function mountApp(root, deps = {}) {
     throw new TypeError('mountApp root must be an HTMLElement');
   }
   const createConversionJob = deps.createConversionJob ?? createDefaultConversionJob;
+  const createPreviewJob = deps.createPreviewJob ?? createDefaultPreviewJob;
+  const renderViewer = deps.renderViewer ?? renderDefaultViewer;
   if (typeof createConversionJob !== 'function') {
     throw new TypeError('createConversionJob must be a function');
+  }
+  if (typeof createPreviewJob !== 'function') {
+    throw new TypeError('createPreviewJob must be a function');
+  }
+  if (typeof renderViewer !== 'function') {
+    throw new TypeError('renderViewer must be a function');
   }
 
   root.innerHTML = `
@@ -92,6 +106,23 @@ export function mountApp(root, deps = {}) {
         </div>
       </section>
 
+      <section class="panel viewer-panel" aria-labelledby="viewer-heading">
+        <div class="section-heading viewer-heading-row">
+          <div><p class="step-label">PREVIEW</p><h2 id="viewer-heading">プレビュー</h2></div>
+          <div class="viewer-actions">
+            <label><input type="radio" name="viewer-mode" value="normal" data-testid="viewer-mode-normal" checked>通常表示</label>
+            <label><input type="radio" name="viewer-mode" value="diff" data-testid="viewer-mode-diff" disabled>差分表示</label>
+            <button type="button" class="icon-button" data-testid="viewer-fit">全体表示</button>
+          </div>
+        </div>
+        <p class="viewer-status" data-testid="viewer-status" aria-live="polite">ファイルを追加すると自動表示します。</p>
+        <div class="viewer-controls" data-testid="viewer-controls"></div>
+        <div class="viewer-stage">
+          <canvas data-testid="viewer-canvas" aria-label="HPGL図面プレビュー"></canvas>
+          <p class="viewer-empty" data-testid="viewer-empty">表示できる図形がありません。</p>
+        </div>
+      </section>
+
       <section class="panel settings-panel" aria-labelledby="settings-heading">
         <div>
           <p class="step-label">STEP 2</p>
@@ -134,6 +165,13 @@ export function mountApp(root, deps = {}) {
     dropZone: root.querySelector('[data-testid="drop-zone"]'),
     fileList: root.querySelector('[data-testid="file-list"]'),
     fileCount: root.querySelector('[data-testid="file-count"]'),
+    viewerStatus: root.querySelector('[data-testid="viewer-status"]'),
+    viewerControls: root.querySelector('[data-testid="viewer-controls"]'),
+    viewerCanvas: root.querySelector('[data-testid="viewer-canvas"]'),
+    viewerEmpty: root.querySelector('[data-testid="viewer-empty"]'),
+    viewerFit: root.querySelector('[data-testid="viewer-fit"]'),
+    viewerModeNormal: root.querySelector('[data-testid="viewer-mode-normal"]'),
+    viewerModeDiff: root.querySelector('[data-testid="viewer-mode-diff"]'),
     outputName: root.querySelector('[data-testid="output-name"]'),
     convert: root.querySelector('[data-testid="convert-button"]'),
     cancel: root.querySelector('[data-testid="cancel-button"]'),
@@ -154,9 +192,20 @@ export function mountApp(root, deps = {}) {
     result: null,
     job: null,
     token: null,
+    previewJob: null,
+    previewToken: null,
+    previewStatus: 'idle',
+    previewFiles: [],
+    visiblePreviewFiles: new Set(),
+    viewerMode: 'normal',
+    compareA: 0,
+    compareB: 1,
+    viewport: fitViewport(null, 1, 1),
+    frameRequest: null,
     destroyed: false,
   };
   const listeners = [];
+  let viewerResizeObserver = null;
 
   function listen(target, type, handler) {
     target.addEventListener(type, handler);
@@ -172,6 +221,253 @@ export function mountApp(root, deps = {}) {
     state.result = null;
     nodes.results.hidden = true;
     nodes.resultsContent.replaceChildren();
+  }
+
+  function previewDimensions() {
+    const rect = nodes.viewerCanvas.getBoundingClientRect();
+    return {
+      width: Math.max(1, rect.width || nodes.viewerCanvas.clientWidth || 1),
+      height: Math.max(1, rect.height || nodes.viewerCanvas.clientHeight || 1),
+    };
+  }
+
+  function viewerGroups() {
+    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
+      const a = state.previewFiles[state.compareA];
+      const b = state.previewFiles[state.compareB];
+      if (!a || !b || state.compareA === state.compareB) {
+        return [];
+      }
+      const difference = compareGeometrySets(a.geometries, b.geometries);
+      return [
+        { color: '#2574a9', opacity: 0.9, geometries: difference.onlyA },
+        { color: '#98a2ad', opacity: 0.72, geometries: difference.common },
+        { color: '#d97706', opacity: 0.9, geometries: difference.onlyB },
+      ];
+    }
+    return state.previewFiles
+      .map((file, index) => ({ file, index }))
+      .filter(({ index }) => state.visiblePreviewFiles.has(index))
+      .map(({ file, index }) => ({
+        color: VIEWER_COLORS[index % VIEWER_COLORS.length],
+        opacity: 0.82,
+        geometries: file.geometries,
+      }));
+  }
+
+  function scheduleViewerRender() {
+    if (state.destroyed || state.frameRequest !== null) {
+      return;
+    }
+    state.frameRequest = requestAnimationFrame(() => {
+      state.frameRequest = null;
+      if (state.destroyed) {
+        return;
+      }
+      const groups = viewerGroups();
+      renderViewer(nodes.viewerCanvas, groups, state.viewport);
+      nodes.viewerEmpty.hidden = groups.some(group => group.geometries.length > 0);
+    });
+  }
+
+  function fitPreview() {
+    const groups = viewerGroups();
+    const { width, height } = previewDimensions();
+    state.viewport = fitViewport(
+      combinedBounds(groups.flatMap(group => group.geometries)),
+      width,
+      height,
+      12,
+    );
+    scheduleViewerRender();
+  }
+
+  function ensureDifferentComparisons(changed) {
+    const lastIndex = state.previewFiles.length - 1;
+    state.compareA = Math.min(Math.max(0, state.compareA), Math.max(0, lastIndex));
+    state.compareB = Math.min(Math.max(0, state.compareB), Math.max(0, lastIndex));
+    if (state.previewFiles.length >= 2 && state.compareA === state.compareB) {
+      if (changed === 'a') {
+        state.compareB = state.compareA === 0 ? 1 : 0;
+      } else {
+        state.compareA = state.compareB === 0 ? 1 : 0;
+      }
+    }
+  }
+
+  function appendCompareOptions(select, selectedIndex) {
+    state.previewFiles.forEach((file, index) => {
+      const option = element('option', '', file.name);
+      option.value = String(index);
+      option.selected = index === selectedIndex;
+      select.append(option);
+    });
+  }
+
+  function renderPreviewControls() {
+    nodes.viewerControls.replaceChildren();
+    nodes.viewerModeNormal.checked = state.viewerMode === 'normal';
+    nodes.viewerModeDiff.checked = state.viewerMode === 'diff';
+    nodes.viewerModeDiff.disabled = state.previewFiles.length < 2;
+
+    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
+      ensureDifferentComparisons();
+      const controls = element('div', 'viewer-diff-controls');
+      const aLabel = element('label', '', 'A ');
+      const aSelect = element('select');
+      aSelect.dataset.testid = 'viewer-compare-a';
+      appendCompareOptions(aSelect, state.compareA);
+      aLabel.append(aSelect);
+      const bLabel = element('label', '', 'B ');
+      const bSelect = element('select');
+      bSelect.dataset.testid = 'viewer-compare-b';
+      appendCompareOptions(bSelect, state.compareB);
+      bLabel.append(bSelect);
+      const difference = compareGeometrySets(
+        state.previewFiles[state.compareA].geometries,
+        state.previewFiles[state.compareB].geometries,
+      );
+      const counts = element(
+        'p',
+        'viewer-diff-counts',
+        `Aのみ ${difference.onlyA.length} / 共通 ${difference.common.length} / Bのみ ${difference.onlyB.length}`,
+      );
+      counts.dataset.testid = 'viewer-diff-counts';
+      aSelect.addEventListener('change', () => {
+        state.compareA = Number(aSelect.value);
+        ensureDifferentComparisons('a');
+        renderPreviewControls();
+        fitPreview();
+      });
+      bSelect.addEventListener('change', () => {
+        state.compareB = Number(bSelect.value);
+        ensureDifferentComparisons('b');
+        renderPreviewControls();
+        fitPreview();
+      });
+      controls.append(aLabel, bLabel, counts);
+      nodes.viewerControls.append(controls);
+      return;
+    }
+
+    const legend = element('div', 'viewer-legend');
+    state.previewFiles.forEach((file, index) => {
+      const label = element('label', 'viewer-layer-option');
+      const toggle = element('input');
+      toggle.type = 'checkbox';
+      toggle.checked = state.visiblePreviewFiles.has(index);
+      toggle.dataset.testid = 'viewer-layer-toggle';
+      const swatch = element('span', 'viewer-swatch');
+      swatch.style.backgroundColor = VIEWER_COLORS[index % VIEWER_COLORS.length];
+      label.append(toggle, swatch, document.createTextNode(`${file.name} / 図形 ${number(file.geometryCount)}`));
+      toggle.addEventListener('change', () => {
+        if (toggle.checked) {
+          state.visiblePreviewFiles.add(index);
+        } else {
+          state.visiblePreviewFiles.delete(index);
+        }
+        fitPreview();
+      });
+      legend.append(label);
+    });
+    nodes.viewerControls.append(legend);
+  }
+
+  function setPreviewStatus(status, message) {
+    state.previewStatus = status;
+    nodes.viewerStatus.dataset.kind = status;
+    nodes.viewerStatus.textContent = message;
+  }
+
+  function finishPreview(token, previewResult) {
+    if (state.destroyed || state.previewToken !== token) {
+      return;
+    }
+    state.previewJob = null;
+    state.previewFiles = Array.isArray(previewResult?.files) ? previewResult.files : [];
+    state.visiblePreviewFiles = new Set(state.previewFiles.map((_file, index) => index));
+    state.compareA = 0;
+    state.compareB = 1;
+    if (state.viewerMode === 'diff' && state.previewFiles.length < 2) {
+      state.viewerMode = 'normal';
+    }
+    setPreviewStatus('ready', `${state.previewFiles.length}ファイルのプレビューを表示しています。`);
+    renderFiles();
+    renderPreviewControls();
+    fitPreview();
+  }
+
+  function failPreview(token, error) {
+    if (state.destroyed || state.previewToken !== token) {
+      return;
+    }
+    state.previewJob = null;
+    state.previewFiles = [];
+    state.visiblePreviewFiles.clear();
+    state.viewerMode = 'normal';
+    const cancelled = error?.name === 'AbortError';
+    const message = error instanceof Error && error.message ? error.message : '不明なエラー';
+    setPreviewStatus(
+      cancelled ? 'cancelled' : 'error',
+      cancelled ? 'プレビューをキャンセルしました。DXF変換は引き続き利用できます。'
+        : `プレビューに失敗しました: ${message}。DXF変換は引き続き利用できます。`,
+    );
+    renderFiles();
+    renderPreviewControls();
+    fitPreview();
+  }
+
+  function startPreview() {
+    state.previewToken = null;
+    if (state.previewJob) {
+      try {
+        state.previewJob.cancel();
+      } catch {
+        // A superseded preview cannot block starting the next local job.
+      }
+      state.previewJob = null;
+    }
+    state.previewFiles = [];
+    state.visiblePreviewFiles.clear();
+    state.viewerMode = 'normal';
+    state.compareA = 0;
+    state.compareB = 1;
+    renderPreviewControls();
+    renderFiles();
+
+    if (state.files.length === 0) {
+      setPreviewStatus('idle', 'ファイルを追加すると自動表示します。');
+      fitPreview();
+      return;
+    }
+
+    const token = Symbol('preview');
+    state.previewToken = token;
+    setPreviewStatus('working', 'プレビューを解析しています…');
+    const onProgress = event => {
+      if (state.destroyed || state.previewToken !== token) {
+        return;
+      }
+      const index = Math.max(0, number(event?.index));
+      const total = Math.max(1, number(event?.total) || state.files.length);
+      setPreviewStatus('working', `プレビューを解析しています… (${Math.min(index, total)} / ${total})`);
+    };
+
+    let job;
+    try {
+      job = createPreviewJob([...state.files], [...state.layerNames], { onProgress });
+      if (!job || typeof job.cancel !== 'function' || !job.promise) {
+        throw new TypeError('プレビュージョブを開始できませんでした');
+      }
+      state.previewJob = job;
+    } catch (error) {
+      failPreview(token, error);
+      return;
+    }
+    Promise.resolve(job.promise).then(
+      result => finishPreview(token, result),
+      error => failPreview(token, error),
+    );
   }
 
   function fileDisplay(index) {
@@ -198,6 +494,16 @@ export function mountApp(root, deps = {}) {
     if (state.converting && index === state.progressIndex) {
       return { status: '変換中', statusKind: 'working', geometryCount: 0, errorCount: 0, warningCount: 0 };
     }
+    const previewed = state.previewFiles[index];
+    if (previewed) {
+      return {
+        status: previewed.errorCount > 0 ? 'エラーあり' : 'プレビュー済み',
+        statusKind: previewed.errorCount > 0 ? 'error' : 'success',
+        geometryCount: number(previewed.geometryCount),
+        errorCount: number(previewed.errorCount),
+        warningCount: number(previewed.warningCount),
+      };
+    }
     return { status: '待機中', statusKind: 'idle', geometryCount: 0, errorCount: 0, warningCount: 0 };
   }
 
@@ -211,6 +517,7 @@ export function mountApp(root, deps = {}) {
     state.progressIndex = 0;
     clearResult();
     renderFiles();
+    startPreview();
     announce(`${removed.name} を削除しました。`);
   }
 
@@ -287,6 +594,7 @@ export function mountApp(root, deps = {}) {
       state.progressIndex = 0;
       clearResult();
       renderFiles();
+      startPreview();
     }
     if (notices.length > 0) {
       announce(notices.join('。'), 'warning');
@@ -493,6 +801,66 @@ export function mountApp(root, deps = {}) {
     addFiles(event.dataTransfer?.files);
   });
   listen(nodes.convert, 'click', startConversion);
+  listen(nodes.viewerModeNormal, 'change', () => {
+    if (!nodes.viewerModeNormal.checked) {
+      return;
+    }
+    state.viewerMode = 'normal';
+    renderPreviewControls();
+    fitPreview();
+  });
+  listen(nodes.viewerModeDiff, 'change', () => {
+    if (!nodes.viewerModeDiff.checked || state.previewFiles.length < 2) {
+      return;
+    }
+    state.viewerMode = 'diff';
+    ensureDifferentComparisons();
+    renderPreviewControls();
+    fitPreview();
+  });
+  listen(nodes.viewerFit, 'click', fitPreview);
+  listen(nodes.viewerCanvas, 'wheel', event => {
+    event.preventDefault();
+    const rect = nodes.viewerCanvas.getBoundingClientRect();
+    state.viewport = zoomViewport(
+      state.viewport,
+      { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      event.deltaY,
+    );
+    scheduleViewerRender();
+  });
+
+  let pointerDrag = null;
+  listen(nodes.viewerCanvas, 'pointerdown', event => {
+    if (event.button !== 0) {
+      return;
+    }
+    pointerDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    nodes.viewerCanvas.setPointerCapture?.(event.pointerId);
+    nodes.viewerCanvas.classList.add('is-panning');
+  });
+  listen(nodes.viewerCanvas, 'pointermove', event => {
+    if (!pointerDrag || event.pointerId !== pointerDrag.id) {
+      return;
+    }
+    const dx = event.clientX - pointerDrag.x;
+    const dy = event.clientY - pointerDrag.y;
+    pointerDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    state.viewport = panViewport(state.viewport, dx, dy);
+    scheduleViewerRender();
+  });
+  const finishPointerDrag = event => {
+    if (!pointerDrag || event.pointerId !== pointerDrag.id) {
+      return;
+    }
+    if (nodes.viewerCanvas.hasPointerCapture?.(event.pointerId)) {
+      nodes.viewerCanvas.releasePointerCapture(event.pointerId);
+    }
+    pointerDrag = null;
+    nodes.viewerCanvas.classList.remove('is-panning');
+  };
+  listen(nodes.viewerCanvas, 'pointerup', finishPointerDrag);
+  listen(nodes.viewerCanvas, 'pointercancel', finishPointerDrag);
   listen(nodes.cancel, 'click', () => {
     if (state.job) {
       announce('キャンセルしています…', 'working');
@@ -504,7 +872,18 @@ export function mountApp(root, deps = {}) {
     }
   });
 
+  if (typeof globalThis.ResizeObserver === 'function') {
+    viewerResizeObserver = new globalThis.ResizeObserver(() => {
+      if (!state.destroyed) {
+        fitPreview();
+      }
+    });
+    viewerResizeObserver.observe(nodes.viewerCanvas);
+  }
+
   renderFiles();
+  renderPreviewControls();
+  fitPreview();
 
   return {
     destroy() {
@@ -513,10 +892,29 @@ export function mountApp(root, deps = {}) {
       }
       state.destroyed = true;
       state.token = null;
+      state.previewToken = null;
       if (state.job) {
-        state.job.cancel();
+        try {
+          state.job.cancel();
+        } catch {
+          // Destruction is best-effort and must continue through every resource.
+        }
         state.job = null;
       }
+      if (state.previewJob) {
+        try {
+          state.previewJob.cancel();
+        } catch {
+          // Destruction is best-effort and must continue through every resource.
+        }
+        state.previewJob = null;
+      }
+      if (state.frameRequest !== null) {
+        cancelAnimationFrame(state.frameRequest);
+        state.frameRequest = null;
+      }
+      viewerResizeObserver?.disconnect();
+      viewerResizeObserver = null;
       listeners.splice(0).forEach(remove => remove());
       root.replaceChildren();
     },
