@@ -3,8 +3,8 @@ import {
   defaultOutputName,
   isSupportedHpglName,
   isZipName,
-  normalizeOutputName,
 } from './files/file-policy.js';
+import { triggerDxfDownload } from './files/dxf-download.js';
 import { createNativeInputRecord } from './files/input-records.js';
 import {
   createUploadExpansionJob as createDefaultUploadExpansionJob,
@@ -217,6 +217,7 @@ export function mountApp(root, deps = {}) {
     progressIndex: 0,
     converting: false,
     result: null,
+    autoDownloadedResult: null,
     job: null,
     token: null,
     previewJob: null,
@@ -247,6 +248,7 @@ export function mountApp(root, deps = {}) {
 
   function clearResult() {
     state.result = null;
+    state.autoDownloadedResult = null;
     nodes.results.hidden = true;
     nodes.resultsContent.replaceChildren();
   }
@@ -908,22 +910,11 @@ export function mountApp(root, deps = {}) {
 
   function downloadResult() {
     if (!state.result?.buffer) {
-      return;
+      return null;
     }
-    const blob = new Blob([state.result.buffer], { type: 'application/dxf' });
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = normalizeOutputName(nodes.outputName.value);
-    anchor.hidden = true;
-    document.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
-    }
-    announce(`${anchor.download} のダウンロードを開始しました。`, 'success');
+    const name = triggerDxfDownload(state.result.buffer, nodes.outputName.value);
+    announce(`${name} のダウンロードを開始しました。`, 'success');
+    return name;
   }
 
   function finishConversion(token, conversionResult) {
@@ -938,6 +929,17 @@ export function mountApp(root, deps = {}) {
     nodes.progressWrap.hidden = true;
     renderResults();
     announce('変換完了。DXFをダウンロードできます。', 'success');
+    if (state.autoDownloadedResult !== conversionResult) {
+      state.autoDownloadedResult = conversionResult;
+      try {
+        downloadResult();
+      } catch {
+        announce(
+          '自動ダウンロードを開始できませんでした。結果画面から再ダウンロードしてください。',
+          'warning',
+        );
+      }
+    }
   }
 
   function failConversion(token, error) {

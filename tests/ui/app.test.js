@@ -130,6 +130,7 @@ describe('mountApp', () => {
     document.body.innerHTML = '<div id="test-root"></div>';
     URL.createObjectURL = vi.fn(() => 'blob:test-download');
     URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     emptyPreviewJob.mockClear();
     vi.stubGlobal('requestAnimationFrame', vi.fn(callback => {
       queueMicrotask(() => callback(0));
@@ -759,6 +760,68 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull();
   });
 
+  it('downloads once automatically and keeps the manual download button', async () => {
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    mount({
+      createConversionJob: () => ({
+        promise: Promise.resolve(result()),
+        cancel: vi.fn(),
+      }),
+    });
+    setInputFiles(
+      document.querySelector('[data-testid="file-input"]'),
+      [hpglFile('sample.hpgl')],
+    );
+    document.querySelector('[data-testid="convert-button"]').click();
+
+    await vi.waitFor(() => expect(anchorClick).toHaveBeenCalledOnce());
+    expect(anchorClick.mock.instances[0].download).toBe('sample.dxf');
+    expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull();
+
+    document.querySelector('[data-testid="download-button"]').click();
+    expect(anchorClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('automatically downloads a DXF that contains conversion diagnostics', async () => {
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    mount({
+      createConversionJob: () => ({
+        promise: Promise.resolve(result({ errors: 1, diagnostics: [{ message: 'bad command' }] })),
+        cancel: vi.fn(),
+      }),
+    });
+    setInputFiles(
+      document.querySelector('[data-testid="file-input"]'),
+      [hpglFile('sample.hpgl')],
+    );
+    document.querySelector('[data-testid="convert-button"]').click();
+
+    await vi.waitFor(() => expect(anchorClick).toHaveBeenCalledOnce());
+    expect(document.body.textContent).toContain('エラーありで生成されたDXF');
+    expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull();
+  });
+
+  it('keeps the result and manual retry when automatic download is blocked', async () => {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => { throw new Error('blocked'); });
+    mount({
+      createConversionJob: () => ({ promise: Promise.resolve(result()), cancel: vi.fn() }),
+    });
+    setInputFiles(
+      document.querySelector('[data-testid="file-input"]'),
+      [hpglFile('sample.hpgl')],
+    );
+    document.querySelector('[data-testid="convert-button"]').click();
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('自動ダウンロードを開始できませんでした');
+    });
+    expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="results"]').hidden).toBe(false);
+  });
+
   it('downloads with a normalized name and revokes the temporary Blob URL', async () => {
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     mount({
@@ -769,6 +832,7 @@ describe('mountApp', () => {
     document.querySelector('[data-testid="convert-button"]').click();
     await vi.waitFor(() => expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull());
 
+    anchorClick.mockClear();
     URL.createObjectURL.mockClear();
     URL.revokeObjectURL.mockClear();
     document.querySelector('[data-testid="download-button"]').click();
@@ -786,8 +850,11 @@ describe('mountApp', () => {
     const jobs = [];
     URL.createObjectURL
       .mockReset()
-      .mockReturnValueOnce('blob:first-download')
-      .mockReturnValueOnce('blob:second-download');
+      .mockReturnValueOnce('blob:first-auto')
+      .mockReturnValueOnce('blob:first-manual')
+      .mockReturnValueOnce('blob:second-auto')
+      .mockReturnValueOnce('blob:second-manual');
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     mount({
       createConversionJob: () => {
         const job = deferredJob();
@@ -799,14 +866,14 @@ describe('mountApp', () => {
     document.querySelector('[data-testid="convert-button"]').click();
     jobs[0].resolve(result());
     await vi.waitFor(() => expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull());
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first-auto');
 
     URL.createObjectURL.mockClear();
     URL.revokeObjectURL.mockClear();
     document.querySelector('[data-testid="download-button"]').click();
     expect(URL.createObjectURL).toHaveBeenCalledOnce();
     expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first-download');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first-manual');
 
     URL.createObjectURL.mockClear();
     URL.revokeObjectURL.mockClear();
@@ -817,13 +884,14 @@ describe('mountApp', () => {
 
     jobs[1].resolve(result());
     await vi.waitFor(() => expect(document.querySelector('[data-testid="download-button"]')).not.toBeNull());
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second-auto');
 
     URL.createObjectURL.mockClear();
     URL.revokeObjectURL.mockClear();
     document.querySelector('[data-testid="download-button"]').click();
     expect(URL.createObjectURL).toHaveBeenCalledOnce();
     expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second-download');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second-manual');
 
     URL.createObjectURL.mockClear();
     URL.revokeObjectURL.mockClear();
