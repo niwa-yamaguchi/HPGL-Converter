@@ -21,12 +21,18 @@ describe('input records', () => {
   it('keeps an archive relative path outside File.name', async () => {
     const source = new File(['zip'], 'drawings.zip', { lastModified: 456 });
     const bytes = new TextEncoder().encode('PD40,0;PU;');
-    const record = createArchiveInputRecord(source, 'parts/A.H01', bytes);
+    const record = createArchiveInputRecord(
+      source,
+      'parts/A.H01',
+      bytes,
+      'sha256:abc123',
+    );
 
     expect(record.name).toBe('parts/A.H01');
     expect(record.size).toBe(bytes.byteLength);
     expect(record.identity).toBe(
-      `drawings.zip\0${source.size}\0${source.lastModified}\0parts/A.H01`,
+      `drawings.zip\0${source.size}\0${source.lastModified}`
+      + '\0sha256:abc123\0parts/A.H01',
     );
     expect(new Uint8Array(await record.blob.arrayBuffer())).toEqual(bytes);
   });

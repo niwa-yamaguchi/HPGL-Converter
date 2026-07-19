@@ -19,7 +19,12 @@ export function createNativeInputRecord(file) {
   };
 }
 
-export function createArchiveInputRecord(sourceFile, entryName, bytes) {
+export function createArchiveInputRecord(
+  sourceFile,
+  entryName,
+  bytes,
+  archiveFingerprint,
+) {
   if (typeof sourceFile?.name !== 'string' || !Number.isFinite(sourceFile.lastModified)) {
     throw new TypeError('Archive source must be a File');
   }
@@ -29,12 +34,15 @@ export function createArchiveInputRecord(sourceFile, entryName, bytes) {
   if (!(bytes instanceof Uint8Array)) {
     throw new TypeError('Archive entry bytes must be a Uint8Array');
   }
+  if (typeof archiveFingerprint !== 'string' || archiveFingerprint.length === 0) {
+    throw new TypeError('Archive fingerprint must be a non-empty string');
+  }
   const blob = new Blob([bytes], { type: 'application/octet-stream' });
   return {
     name: entryName,
     blob,
     size: blob.size,
-    identity: `${fileIdentity(sourceFile)}\0${entryName}`,
+    identity: `${fileIdentity(sourceFile)}\0${archiveFingerprint}\0${entryName}`,
   };
 }
 

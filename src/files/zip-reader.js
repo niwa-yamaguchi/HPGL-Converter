@@ -1,8 +1,11 @@
-import { Inflate, strFromU8, unzip } from 'fflate';
+import { AsyncInflate, strFromU8 } from 'fflate';
 import { isSupportedHpglName, isZipName } from './file-policy.js';
 import { createArchiveInputRecord } from './input-records.js';
 
 const MIB = 1024 * 1024;
+const IO_CHUNK_BYTES = 256 * 1024;
+// A DEFLATE input byte can encode at most four 258-byte copies.
+const DEFLATE_MAX_EXPANSION_RATIO = 1032;
 
 export const DEFAULT_ZIP_LIMITS = Object.freeze({
   maxArchiveBytes: 50 * MIB,
@@ -19,16 +22,30 @@ export class ZipInputError extends Error {
   }
 }
 
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
-const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+const DRIVE_PATH = /^[A-Za-z]:/;
 const EOCD_SIGNATURE = 0x06054b50;
+const ZIP64_EOCD_SIGNATURE = 0x06064b50;
+const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
 const CENTRAL_HEADER_SIGNATURE = 0x02014b50;
 const LOCAL_HEADER_SIGNATURE = 0x04034b50;
+const ZIP64_EXTRA_FIELD = 0x0001;
 const MAX_ZIP_COMMENT_BYTES = 0xffff;
 const SUPPORTED_COMPRESSION_METHODS = new Set([0, 8]);
-const DEFLATE_PREFLIGHT_CHUNK_BYTES = 1024;
-// One input byte can encode at most four 258-byte length/distance copies.
-const DEFLATE_MAX_EXPANSION_RATIO = 1032;
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value & 1) !== 0
+        ? 0xedb88320 ^ (value >>> 1)
+        : value >>> 1;
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
 
 export function normalizeZipEntryPath(rawName) {
   if (typeof rawName !== 'string' || rawName.length === 0
@@ -64,8 +81,73 @@ function invalidZip(error) {
     : new ZipInputError('ZIP_INVALID', 'ZIPを展開できませんでした', { cause: error });
 }
 
-function zipInvalid(message) {
-  return new ZipInputError('ZIP_INVALID', message);
+function normalizeFailure(error) {
+  return error?.name === 'AbortError' ? error : invalidZip(error);
+}
+
+function zipError(code, message, options) {
+  return new ZipInputError(code, message, options);
+}
+
+function zipInvalid(message, options) {
+  return zipError('ZIP_INVALID', message, options);
+}
+
+function formatByteLimit(bytes) {
+  if (bytes % MIB === 0) {
+    return `${bytes / MIB} MiB`;
+  }
+  if (bytes > MIB) {
+    return `${Number((bytes / MIB).toFixed(2))} MiB`;
+  }
+  return `${bytes} bytes`;
+}
+
+function archiveTooLarge(limits) {
+  return zipError(
+    'ZIP_TOO_LARGE',
+    `ZIP本体が${formatByteLimit(limits.maxArchiveBytes)}を超えています`,
+  );
+}
+
+function entryLimitExceeded(limits) {
+  return zipError(
+    'ZIP_ENTRY_LIMIT',
+    `対応HPGLが${limits.maxEntries}件を超えています`,
+  );
+}
+
+function entryTooLarge(name, limits) {
+  return zipError(
+    'ZIP_ENTRY_TOO_LARGE',
+    `展開後ファイルが${formatByteLimit(limits.maxEntryBytes)}を超えています: ${name}`,
+  );
+}
+
+function totalTooLarge(limits) {
+  return zipError(
+    'ZIP_TOTAL_TOO_LARGE',
+    `展開後合計が${formatByteLimit(limits.maxTotalBytes)}を超えています`,
+  );
+}
+
+function encryptedZip() {
+  return zipError('ZIP_ENCRYPTED', '暗号化されたZIPは展開できません');
+}
+
+function unsupportedCompression() {
+  return zipError(
+    'ZIP_UNSUPPORTED_COMPRESSION',
+    '未対応のZIP圧縮方式です',
+  );
+}
+
+function zip64Unsupported() {
+  return zipError('ZIP64_UNSUPPORTED', 'ZIP64には対応していません');
+}
+
+function splitZipUnsupported() {
+  return zipError('ZIP_SPLIT_UNSUPPORTED', '分割ZIPには対応していません');
 }
 
 function findEndOfCentralDirectory(view) {
@@ -82,39 +164,120 @@ function findEndOfCentralDirectory(view) {
   throw zipInvalid('ZIPの中央ディレクトリを取得できません');
 }
 
-function validateEntryHeaders(view, headerOffset, centralDirectoryOffset) {
-  if (headerOffset + 46 > view.byteLength
+function containsSignature(view, start, end, signature) {
+  for (let offset = start; offset + 4 <= end; offset += 1) {
+    if (view.getUint32(offset, true) === signature) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function decodeEntryName(view, offset, length, utf8) {
+  return strFromU8(
+    new Uint8Array(
+      view.buffer,
+      view.byteOffset + offset,
+      length,
+    ),
+    !utf8,
+  );
+}
+
+function validateExtraFields(view, offset, length) {
+  const end = offset + length;
+  if (end > view.byteLength) {
+    throw zipInvalid('ZIPの拡張フィールドが破損しています');
+  }
+  let cursor = offset;
+  while (cursor < end) {
+    if (cursor + 4 > end) {
+      throw zipInvalid('ZIPの拡張フィールドが破損しています');
+    }
+    const fieldId = view.getUint16(cursor, true);
+    const fieldBytes = view.getUint16(cursor + 2, true);
+    const next = cursor + 4 + fieldBytes;
+    if (next > end) {
+      throw zipInvalid('ZIPの拡張フィールドが破損しています');
+    }
+    if (fieldId === ZIP64_EXTRA_FIELD) {
+      throw zip64Unsupported();
+    }
+    cursor = next;
+  }
+}
+
+function validateEntryHeaders(
+  view,
+  headerOffset,
+  centralDirectoryOffset,
+  centralDirectoryEnd,
+) {
+  if (headerOffset + 46 > centralDirectoryEnd
       || view.getUint32(headerOffset, true) !== CENTRAL_HEADER_SIGNATURE) {
     throw zipInvalid('ZIPの中央ディレクトリが破損しています');
   }
 
   const flags = view.getUint16(headerOffset + 8, true);
   const method = view.getUint16(headerOffset + 10, true);
+  const crc = view.getUint32(headerOffset + 16, true);
   const compressedSize = view.getUint32(headerOffset + 20, true);
   const originalSize = view.getUint32(headerOffset + 24, true);
   const nameBytes = view.getUint16(headerOffset + 28, true);
   const extraBytes = view.getUint16(headerOffset + 30, true);
   const commentBytes = view.getUint16(headerOffset + 32, true);
+  const diskStart = view.getUint16(headerOffset + 34, true);
   const localOffset = view.getUint32(headerOffset + 42, true);
-  const nextOffset = headerOffset + 46 + nameBytes + extraBytes + commentBytes;
+  const extraOffset = headerOffset + 46 + nameBytes;
+  const nextOffset = extraOffset + extraBytes + commentBytes;
 
-  if (nextOffset > view.byteLength || localOffset + 30 > view.byteLength
+  if (compressedSize === 0xffffffff || originalSize === 0xffffffff
+      || localOffset === 0xffffffff || diskStart === 0xffff) {
+    throw zip64Unsupported();
+  }
+  if (diskStart !== 0) {
+    throw splitZipUnsupported();
+  }
+  if (nextOffset > centralDirectoryEnd) {
+    throw zipInvalid('ZIPの中央ディレクトリが破損しています');
+  }
+  validateExtraFields(view, extraOffset, extraBytes);
+
+  if ((flags & 1) !== 0) {
+    throw encryptedZip();
+  }
+  if (!SUPPORTED_COMPRESSION_METHODS.has(method)) {
+    throw unsupportedCompression();
+  }
+
+  if (localOffset + 30 > centralDirectoryOffset
       || view.getUint32(localOffset, true) !== LOCAL_HEADER_SIGNATURE) {
     throw zipInvalid('ZIPのエントリーヘッダーが破損しています');
   }
 
   const localFlags = view.getUint16(localOffset + 6, true);
   const localMethod = view.getUint16(localOffset + 8, true);
+  const localCrc = view.getUint32(localOffset + 14, true);
+  const localCompressedSize = view.getUint32(localOffset + 18, true);
+  const localOriginalSize = view.getUint32(localOffset + 22, true);
   const localNameBytes = view.getUint16(localOffset + 26, true);
   const localExtraBytes = view.getUint16(localOffset + 28, true);
-  const dataOffset = localOffset + 30 + localNameBytes + localExtraBytes;
-  if ((flags & 1) !== 0 || (localFlags & 1) !== 0) {
-    throw zipInvalid('暗号化されたZIPは展開できません');
+  const localNameOffset = localOffset + 30;
+  const localExtraOffset = localNameOffset + localNameBytes;
+  const dataOffset = localExtraOffset + localExtraBytes;
+
+  if (localCompressedSize === 0xffffffff || localOriginalSize === 0xffffffff) {
+    throw zip64Unsupported();
   }
-  if (!SUPPORTED_COMPRESSION_METHODS.has(method)
-      || !SUPPORTED_COMPRESSION_METHODS.has(localMethod)
-      || method !== localMethod) {
-    throw zipInvalid('未対応のZIP圧縮方式です');
+  validateExtraFields(view, localExtraOffset, localExtraBytes);
+  if ((localFlags & 1) !== 0) {
+    throw encryptedZip();
+  }
+  if (!SUPPORTED_COMPRESSION_METHODS.has(localMethod)) {
+    throw unsupportedCompression();
+  }
+  if (method !== localMethod) {
+    throw zipInvalid('ZIPの圧縮方式がヘッダー間で一致しません');
   }
   if (dataOffset + compressedSize > centralDirectoryOffset) {
     throw zipInvalid('ZIPの圧縮データ範囲が不正です');
@@ -122,20 +285,35 @@ function validateEntryHeaders(view, headerOffset, centralDirectoryOffset) {
   if (method === 0 && compressedSize !== originalSize) {
     throw zipInvalid('無圧縮エントリーのサイズが一致しません');
   }
+  if ((localFlags & 8) === 0
+      && (localCrc !== crc
+        || localCompressedSize !== compressedSize
+        || localOriginalSize !== originalSize)) {
+    throw zipInvalid('ZIPのローカルヘッダーが中央ディレクトリと一致しません');
+  }
 
-  const rawName = strFromU8(
-    new Uint8Array(
-      view.buffer,
-      view.byteOffset + headerOffset + 46,
-      nameBytes,
-    ),
-    (flags & 2048) === 0,
+  const rawName = decodeEntryName(
+    view,
+    headerOffset + 46,
+    nameBytes,
+    (flags & 2048) !== 0,
   );
+  const localName = decodeEntryName(
+    view,
+    localNameOffset,
+    localNameBytes,
+    (localFlags & 2048) !== 0,
+  );
+  if (rawName !== localName) {
+    throw zipInvalid('ZIPのエントリー名がヘッダー間で一致しません');
+  }
+
   return {
     nextOffset,
     entry: {
       rawName,
       method,
+      crc,
       compressedSize,
       originalSize,
       dataOffset,
@@ -149,6 +327,12 @@ function validateZipHeaders(bytes) {
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const eocdOffset = findEndOfCentralDirectory(view);
+
+  if (eocdOffset >= 20
+      && view.getUint32(eocdOffset - 20, true) === ZIP64_LOCATOR_SIGNATURE) {
+    throw zip64Unsupported();
+  }
+
   const diskNumber = view.getUint16(eocdOffset + 4, true);
   const centralDisk = view.getUint16(eocdOffset + 6, true);
   const diskEntries = view.getUint16(eocdOffset + 8, true);
@@ -156,150 +340,408 @@ function validateZipHeaders(bytes) {
   const centralBytes = view.getUint32(eocdOffset + 12, true);
   const centralOffset = view.getUint32(eocdOffset + 16, true);
 
-  if (diskNumber !== 0 || centralDisk !== 0 || diskEntries !== totalEntries
-      || totalEntries === 0xffff || centralBytes === 0xffffffff
-      || centralOffset === 0xffffffff
-      || centralOffset + centralBytes > eocdOffset) {
+  if (diskNumber === 0xffff || centralDisk === 0xffff
+      || diskEntries === 0xffff || totalEntries === 0xffff
+      || centralBytes === 0xffffffff || centralOffset === 0xffffffff) {
+    throw zip64Unsupported();
+  }
+  if (diskNumber !== 0 || centralDisk !== 0 || diskEntries !== totalEntries) {
+    throw splitZipUnsupported();
+  }
+
+  const centralEnd = centralOffset + centralBytes;
+  if (centralEnd > eocdOffset) {
     throw zipInvalid('ZIPの中央ディレクトリが不正です');
+  }
+  if (containsSignature(
+    view,
+    centralEnd,
+    eocdOffset,
+    ZIP64_EOCD_SIGNATURE,
+  ) || containsSignature(
+    view,
+    centralEnd,
+    eocdOffset,
+    ZIP64_LOCATOR_SIGNATURE,
+  )) {
+    throw zip64Unsupported();
   }
 
   const entries = [];
   let offset = centralOffset;
   for (let index = 0; index < totalEntries; index += 1) {
-    const parsed = validateEntryHeaders(view, offset, centralOffset);
+    const parsed = validateEntryHeaders(
+      view,
+      offset,
+      centralOffset,
+      centralEnd,
+    );
     entries.push(parsed.entry);
     offset = parsed.nextOffset;
   }
-  if (offset !== centralOffset + centralBytes) {
+  if (offset !== centralEnd) {
     throw zipInvalid('ZIPの中央ディレクトリサイズが一致しません');
   }
   return entries;
 }
 
-function entryTooLarge(name) {
-  return new ZipInputError(
-    'ZIP_ENTRY_TOO_LARGE',
-    `展開後ファイルが20 MiBを超えています: ${name}`,
-  );
-}
-
-function totalTooLarge() {
-  return new ZipInputError(
-    'ZIP_TOTAL_TOO_LARGE',
-    '展開後合計が100 MiBを超えています',
-  );
-}
-
-function measureDeflatedEntry(bytes, entry, name, limits, previousTotal) {
-  let expandedBytes = 0;
-  const compressedChunkBytes = Math.max(
-    1,
-    Math.min(
-      DEFLATE_PREFLIGHT_CHUNK_BYTES,
-      Math.floor(limits.maxEntryBytes / DEFLATE_MAX_EXPANSION_RATIO),
-    ),
-  );
-  const inflater = new Inflate(chunk => {
-    expandedBytes += chunk.byteLength;
-    if (expandedBytes > limits.maxEntryBytes) {
-      throw entryTooLarge(name);
-    }
-    if (previousTotal + expandedBytes > limits.maxTotalBytes) {
-      throw totalTooLarge();
-    }
-  });
-  const endOffset = entry.dataOffset + entry.compressedSize;
-
-  try {
-    if (entry.dataOffset === endOffset) {
-      inflater.push(new Uint8Array(), true);
-    }
-    for (
-      let offset = entry.dataOffset;
-      offset < endOffset;
-      offset += compressedChunkBytes
-    ) {
-      const nextOffset = Math.min(
-        offset + compressedChunkBytes,
-        endOffset,
-      );
-      inflater.push(
-        bytes.subarray(offset, nextOffset),
-        nextOffset === endOffset,
-      );
-    }
-  } catch (error) {
-    throw invalidZip(error);
-  }
-
-  return expandedBytes;
-}
-
-function preflightExpandedSizes(bytes, entries, limits) {
-  const measuredSizes = new Map();
+function selectEntries(entries, limits) {
+  const ignored = {
+    directories: 0,
+    unsupported: 0,
+    nestedArchives: 0,
+    unsafePaths: 0,
+  };
+  const accepted = [];
   const seen = new Set();
-  let acceptedCount = 0;
   let declaredTotal = 0;
-  let actualTotal = 0;
-  let sizeMismatchName = null;
 
   for (const entry of entries) {
     if (entry.rawName.endsWith('/')) {
+      ignored.directories += 1;
       continue;
     }
     const name = normalizeZipEntryPath(entry.rawName);
-    if (!name || isZipName(name) || !isSupportedHpglName(name)) {
+    if (!name) {
+      ignored.unsafePaths += 1;
+      continue;
+    }
+    if (isZipName(name)) {
+      ignored.nestedArchives += 1;
+      continue;
+    }
+    if (!isSupportedHpglName(name)) {
+      ignored.unsupported += 1;
       continue;
     }
     if (seen.has(name)) {
-      throw new ZipInputError(
+      throw zipError(
         'ZIP_DUPLICATE_PATH',
         `ZIP内でパスが重複しています: ${name}`,
       );
     }
-    if (acceptedCount + 1 > limits.maxEntries) {
-      throw new ZipInputError(
-        'ZIP_ENTRY_LIMIT',
-        '対応HPGLが100件を超えています',
-      );
+    if (accepted.length + 1 > limits.maxEntries) {
+      throw entryLimitExceeded(limits);
     }
     if (entry.originalSize > limits.maxEntryBytes) {
-      throw entryTooLarge(name);
+      throw entryTooLarge(name, limits);
     }
     if (declaredTotal + entry.originalSize > limits.maxTotalBytes) {
-      throw totalTooLarge();
-    }
-
-    const actualSize = entry.method === 0
-      ? entry.compressedSize
-      : measureDeflatedEntry(bytes, entry, name, limits, actualTotal);
-    if (actualSize > limits.maxEntryBytes) {
-      throw entryTooLarge(name);
-    }
-    if (actualTotal + actualSize > limits.maxTotalBytes) {
-      throw totalTooLarge();
-    }
-    if (actualSize !== entry.originalSize) {
-      sizeMismatchName ??= name;
+      throw totalTooLarge(limits);
     }
 
     seen.add(name);
-    acceptedCount += 1;
     declaredTotal += entry.originalSize;
-    actualTotal += actualSize;
-    measuredSizes.set(entry.rawName, actualSize);
+    accepted.push({ ...entry, name });
   }
 
+  return { accepted, ignored };
+}
+
+function updateCrc(crc, bytes) {
+  let next = crc;
+  for (const byte of bytes) {
+    next = CRC_TABLE[(next ^ byte) & 0xff] ^ (next >>> 8);
+  }
+  return next >>> 0;
+}
+
+function joinChunks(chunks, byteLength) {
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function createEntryCollector(entry, limits, actualTotal) {
+  const chunks = [];
+  let byteLength = 0;
+  let crc = 0xffffffff;
+
+  return {
+    add(chunk) {
+      if (!(chunk instanceof Uint8Array)) {
+        throw new TypeError('Archive entry chunk must be a Uint8Array');
+      }
+      const nextEntryBytes = byteLength + chunk.byteLength;
+      if (nextEntryBytes > limits.maxEntryBytes) {
+        throw entryTooLarge(entry.name, limits);
+      }
+      const nextTotalBytes = actualTotal.value + chunk.byteLength;
+      if (nextTotalBytes > limits.maxTotalBytes) {
+        throw totalTooLarge(limits);
+      }
+      chunks.push(chunk);
+      byteLength = nextEntryBytes;
+      actualTotal.value = nextTotalBytes;
+      crc = updateCrc(crc, chunk);
+    },
+    finish() {
+      if (((crc ^ 0xffffffff) >>> 0) !== entry.crc) {
+        throw zipInvalid(`CRC-32が一致しません: ${entry.name}`);
+      }
+      return {
+        bytes: joinChunks(chunks, byteLength),
+        sizeMismatch: byteLength !== entry.originalSize,
+      };
+    },
+  };
+}
+
+function defaultScheduleTask(callback) {
+  const timer = setTimeout(callback, 0);
+  return () => clearTimeout(timer);
+}
+
+function expandStoredEntry({
+  archiveBytes,
+  entry,
+  limits,
+  actualTotal,
+  scheduleTask,
+  isCancelled,
+  installActiveCancel,
+}) {
+  return new Promise((resolve, reject) => {
+    const collector = createEntryCollector(entry, limits, actualTotal);
+    const endOffset = entry.dataOffset + entry.compressedSize;
+    let offset = entry.dataOffset;
+    let done = false;
+    let cancelScheduled = () => {};
+    let clearActiveCancel = () => {};
+
+    const fail = error => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cancelScheduled();
+      clearActiveCancel();
+      reject(normalizeFailure(error));
+    };
+    const cancel = () => fail(abortError());
+    clearActiveCancel = installActiveCancel(cancel);
+
+    const step = () => {
+      cancelScheduled = () => {};
+      if (isCancelled()) {
+        cancel();
+        return;
+      }
+      try {
+        const nextOffset = Math.min(offset + IO_CHUNK_BYTES, endOffset);
+        collector.add(archiveBytes.subarray(offset, nextOffset));
+        offset = nextOffset;
+        if (offset === endOffset) {
+          const result = collector.finish();
+          done = true;
+          clearActiveCancel();
+          resolve(result);
+          return;
+        }
+        cancelScheduled = scheduleTask(step);
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    try {
+      cancelScheduled = scheduleTask(step);
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+function deflateInputChunkBytes(limits) {
+  return Math.max(
+    1,
+    Math.min(
+      IO_CHUNK_BYTES,
+      Math.floor(limits.maxEntryBytes / DEFLATE_MAX_EXPANSION_RATIO),
+    ),
+  );
+}
+
+function expandDeflatedEntry({
+  archiveBytes,
+  entry,
+  limits,
+  actualTotal,
+  createInflater,
+  scheduleTask,
+  isCancelled,
+  installActiveCancel,
+}) {
+  return new Promise((resolve, reject) => {
+    const collector = createEntryCollector(entry, limits, actualTotal);
+    const endOffset = entry.dataOffset + entry.compressedSize;
+    const chunkBytes = deflateInputChunkBytes(limits);
+    let offset = entry.dataOffset;
+    let done = false;
+    let inflater = null;
+    let cancelScheduled = () => {};
+    let clearActiveCancel = () => {};
+
+    const fail = error => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cancelScheduled();
+      try {
+        inflater?.terminate();
+      } catch {
+        // Preserve the expansion failure that triggered termination.
+      }
+      clearActiveCancel();
+      reject(normalizeFailure(error));
+    };
+    const cancel = () => fail(abortError());
+
+    const ondata = (error, chunk, final) => {
+      if (done) {
+        return;
+      }
+      if (error) {
+        fail(error);
+        return;
+      }
+      try {
+        collector.add(chunk);
+        if (final) {
+          const result = collector.finish();
+          done = true;
+          cancelScheduled();
+          clearActiveCancel();
+          resolve(result);
+        }
+      } catch (callbackError) {
+        fail(callbackError);
+      }
+    };
+
+    const scheduleFeed = () => {
+      if (done) {
+        return;
+      }
+      try {
+        cancelScheduled = scheduleTask(feed);
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    const feed = () => {
+      cancelScheduled = () => {};
+      if (isCancelled()) {
+        cancel();
+        return;
+      }
+      const nextOffset = Math.min(offset + chunkBytes, endOffset);
+      const final = nextOffset === endOffset;
+      const chunk = archiveBytes.slice(offset, nextOffset);
+      offset = nextOffset;
+      if (!final) {
+        inflater.ondrain = () => {
+          inflater.ondrain = null;
+          scheduleFeed();
+        };
+      }
+      try {
+        inflater.push(chunk, final);
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    try {
+      inflater = createInflater(ondata);
+      if (typeof inflater?.push !== 'function'
+          || typeof inflater?.terminate !== 'function') {
+        throw new TypeError('Async ZIP inflater is invalid');
+      }
+      clearActiveCancel = installActiveCancel(cancel);
+      scheduleFeed();
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+async function expandEntries({
+  archiveBytes,
+  entries,
+  limits,
+  createInflater,
+  scheduleTask,
+  isCancelled,
+  installActiveCancel,
+}) {
+  const actualTotal = { value: 0 };
+  const expanded = [];
+  let sizeMismatchName = null;
+
+  for (const entry of entries) {
+    if (isCancelled()) {
+      throw abortError();
+    }
+    const params = {
+      archiveBytes,
+      entry,
+      limits,
+      actualTotal,
+      scheduleTask,
+      isCancelled,
+      installActiveCancel,
+    };
+    const result = entry.method === 0
+      ? await expandStoredEntry(params)
+      : await expandDeflatedEntry({ ...params, createInflater });
+    if (result.sizeMismatch) {
+      sizeMismatchName ??= entry.name;
+    }
+    expanded.push({ entry, bytes: result.bytes });
+  }
   if (sizeMismatchName !== null) {
     throw zipInvalid(`展開後サイズが申告値と一致しません: ${sizeMismatchName}`);
   }
-  return measuredSizes;
+
+  return expanded;
+}
+
+async function fingerprintArchive(bytes, digestImpl) {
+  const digest = digestImpl ?? (async data => {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) {
+      throw new Error('Web Crypto SHA-256 is unavailable');
+    }
+    return subtle.digest('SHA-256', data);
+  });
+  if (typeof digest !== 'function') {
+    throw new TypeError('ZIP digest implementation must be a function');
+  }
+  const result = await digest(bytes);
+  const hash = result instanceof ArrayBuffer
+    ? new Uint8Array(result)
+    : ArrayBuffer.isView(result)
+      ? new Uint8Array(result.buffer, result.byteOffset, result.byteLength)
+      : null;
+  if (hash?.byteLength !== 32) {
+    throw new TypeError('ZIP SHA-256 digest must contain 32 bytes');
+  }
+  return `sha256:${Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function createZipExpansionJob(sourceFile, options = {}) {
   const limits = limitsWith(options.limits);
-  const unzipImpl = options.unzipImpl ?? unzip;
-  let terminate = () => {};
+  const createInflater = options.createInflater
+    ?? (ondata => new AsyncInflate(ondata));
+  const scheduleTask = options.scheduleTask ?? defaultScheduleTask;
+  let activeCancel = () => {};
   let cancelled = false;
   let settled = false;
   let rejectCancellation;
@@ -308,147 +750,66 @@ export function createZipExpansionJob(sourceFile, options = {}) {
     rejectCancellation = reject;
   });
 
+  const installActiveCancel = cancel => {
+    activeCancel = cancel;
+    return () => {
+      if (activeCancel === cancel) {
+        activeCancel = () => {};
+      }
+    };
+  };
+
   const work = (async () => {
     if (sourceFile.size > limits.maxArchiveBytes) {
-      throw new ZipInputError('ZIP_TOO_LARGE', 'ZIP本体が50 MiBを超えています');
+      throw archiveTooLarge(limits);
     }
-    const bytes = new Uint8Array(await sourceFile.arrayBuffer());
-    if (cancelled) {
-      throw abortError();
-    }
-    let measuredSizes;
-    try {
-      const entries = validateZipHeaders(bytes);
-      measuredSizes = preflightExpandedSizes(bytes, entries, limits);
-    } catch (error) {
-      throw invalidZip(error);
-    }
+    const archiveBytes = new Uint8Array(await sourceFile.arrayBuffer());
     if (cancelled) {
       throw abortError();
     }
 
-    return new Promise((resolve, reject) => {
-      const ignored = {
-        directories: 0,
-        unsupported: 0,
-        nestedArchives: 0,
-        unsafePaths: 0,
-      };
-      const acceptedEntries = [];
-      const seen = new Set();
-      let totalBytes = 0;
-      let policyError = null;
+    const entries = validateZipHeaders(archiveBytes);
+    const { accepted, ignored } = selectEntries(entries, limits);
+    if (cancelled) {
+      throw abortError();
+    }
+    if (accepted.length === 0) {
+      return { items: [], ignored };
+    }
 
-      const failPolicy = (code, message) => {
-        policyError ??= new ZipInputError(code, message);
-        return false;
-      };
+    const archiveFingerprint = await fingerprintArchive(
+      archiveBytes,
+      options.digestImpl,
+    );
+    if (cancelled) {
+      throw abortError();
+    }
 
-      try {
-        terminate = unzipImpl(bytes, {
-          filter(entry) {
-            if (policyError) {
-              return false;
-            }
-            if (entry.name.endsWith('/')) {
-              ignored.directories += 1;
-              return false;
-            }
-            const name = normalizeZipEntryPath(entry.name);
-            if (!name) {
-              ignored.unsafePaths += 1;
-              return false;
-            }
-            if (isZipName(name)) {
-              ignored.nestedArchives += 1;
-              return false;
-            }
-            if (!isSupportedHpglName(name)) {
-              ignored.unsupported += 1;
-              return false;
-            }
-            if (seen.has(name)) {
-              return failPolicy(
-                'ZIP_DUPLICATE_PATH',
-                `ZIP内でパスが重複しています: ${name}`,
-              );
-            }
-            if (!Number.isSafeInteger(entry.originalSize) || entry.originalSize < 0) {
-              return failPolicy('ZIP_INVALID', `展開後サイズを取得できません: ${name}`);
-            }
-            if (acceptedEntries.length + 1 > limits.maxEntries) {
-              return failPolicy('ZIP_ENTRY_LIMIT', '対応HPGLが100件を超えています');
-            }
-            if (entry.originalSize > limits.maxEntryBytes) {
-              return failPolicy(
-                'ZIP_ENTRY_TOO_LARGE',
-                `展開後ファイルが20 MiBを超えています: ${name}`,
-              );
-            }
-            if (totalBytes + entry.originalSize > limits.maxTotalBytes) {
-              return failPolicy(
-                'ZIP_TOTAL_TOO_LARGE',
-                '展開後合計が100 MiBを超えています',
-              );
-            }
-            seen.add(name);
-            acceptedEntries.push({ rawName: entry.name, name });
-            totalBytes += entry.originalSize;
-            return true;
-          },
-        }, (error, files) => {
-          if (cancelled) {
-            reject(abortError());
-            return;
-          }
-          if (policyError) {
-            reject(policyError);
-            return;
-          }
-          if (error) {
-            reject(invalidZip(error));
-            return;
-          }
-          try {
-            let actualTotal = 0;
-            let sizeMismatchName = null;
-            const extractedEntries = acceptedEntries.map(({ rawName, name }) => {
-              const entryBytes = files[rawName];
-              if (!(entryBytes instanceof Uint8Array)) {
-                throw new TypeError('Archive entry bytes must be a Uint8Array');
-              }
-              if (entryBytes.byteLength > limits.maxEntryBytes) {
-                throw entryTooLarge(name);
-              }
-              actualTotal += entryBytes.byteLength;
-              if (actualTotal > limits.maxTotalBytes) {
-                throw totalTooLarge();
-              }
-              if (entryBytes.byteLength !== measuredSizes.get(rawName)) {
-                sizeMismatchName ??= name;
-              }
-              return { entryBytes, name };
-            });
-            if (sizeMismatchName !== null) {
-              throw zipInvalid(
-                `展開後サイズが事前検証値と一致しません: ${sizeMismatchName}`,
-              );
-            }
-            resolve({
-              items: extractedEntries.map(({ entryBytes, name }) => (
-                createArchiveInputRecord(sourceFile, name, entryBytes)
-              )),
-              ignored,
-            });
-          } catch (recordError) {
-            reject(invalidZip(recordError));
-          }
-        });
-      } catch (error) {
-        reject(invalidZip(error));
-      }
+    const expanded = await expandEntries({
+      archiveBytes,
+      entries: accepted,
+      limits,
+      createInflater,
+      scheduleTask,
+      isCancelled: () => cancelled,
+      installActiveCancel,
     });
-  })();
+    if (cancelled) {
+      throw abortError();
+    }
+
+    return {
+      items: expanded.map(({ entry, bytes }) => createArchiveInputRecord(
+        sourceFile,
+        entry.name,
+        bytes,
+        archiveFingerprint,
+      )),
+      ignored,
+    };
+  })().catch(error => {
+    throw normalizeFailure(error);
+  });
 
   const promise = Promise.race([work, cancellation]).finally(() => {
     settled = true;
@@ -461,7 +822,7 @@ export function createZipExpansionJob(sourceFile, options = {}) {
         return;
       }
       cancelled = true;
-      terminate();
+      activeCancel();
       rejectCancellation(abortError());
     },
   };

@@ -956,7 +956,12 @@ describe('mountApp', () => {
     expect(readme).toContain('100 MiB');
     expect(readme).toContain('最初に追加できた元ファイル名');
     expect(readme).toContain('一度だけ');
+    expect(readme).toContain('drawings.zip');
+    expect(readme).toContain('drawings.dxf');
+    expect(readme).toContain('種類別');
     expect(readme).toContain('自動ダウンロード');
+    expect(readme).toContain('自動ダウンロードを開始できなかった場合');
     expect(readme).toContain('再ダウンロード');
+    expect(readme).toContain('自動変更されません');
   });
 });
