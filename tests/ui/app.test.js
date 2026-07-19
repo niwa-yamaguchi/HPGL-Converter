@@ -943,4 +943,20 @@ describe('mountApp', () => {
     expect(viteConfig).toContain('viteSingleFile()');
     expect(viteConfig).toContain('modulePreload: false');
   });
+
+  it('documents the ZIP limits, default name, and download workflow', async () => {
+    const readme = await readFile(resolve(process.cwd(), 'README.md'), 'utf8');
+
+    expect(readme).toContain('ZIP');
+    expect(readme).toContain('サブフォルダ');
+    expect(readme).toContain('対応するHPGLファイルだけ');
+    expect(readme).toContain('50 MiB');
+    expect(readme).toContain('100件');
+    expect(readme).toContain('20 MiB');
+    expect(readme).toContain('100 MiB');
+    expect(readme).toContain('最初に追加できた元ファイル名');
+    expect(readme).toContain('一度だけ');
+    expect(readme).toContain('自動ダウンロード');
+    expect(readme).toContain('再ダウンロード');
+  });
 });
