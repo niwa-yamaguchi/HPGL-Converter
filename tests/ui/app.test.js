@@ -158,7 +158,7 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(true);
 
     const input = document.querySelector('[data-testid="file-input"]');
-    expect(input.getAttribute('aria-label')).toBe('HPGLファイルを選択');
+    expect(input.getAttribute('aria-label')).toBe('HPGLまたはZIPファイルを選択');
     expect(input.hidden || input.tabIndex === -1).toBe(true);
     expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
     const click = vi.spyOn(input, 'click');
@@ -293,6 +293,60 @@ describe('mountApp', () => {
     });
     expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(0);
     expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
+  });
+
+  it('unlocks without changing existing files when an import returns a null source result', async () => {
+    const job = deferredJob();
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob: vi.fn(() => job),
+    });
+    const input = document.querySelector('[data-testid="file-input"]');
+    setInputFiles(input, [hpglFile('existing.H01')]);
+    setInputFiles(input, [zipFile('invalid-result.zip')]);
+
+    job.resolve({ results: [null] });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('ZIPの展開に失敗しました');
+    });
+    expect(input.disabled).toBe(false);
+    expect(document.querySelector('[data-testid="drop-zone"]').disabled).toBe(false);
+    expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(false);
+    expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(1);
+    expect(document.querySelector('[data-testid="file-row"]').textContent)
+      .toContain('existing.H01');
+  });
+
+  it('rejects invalid input records atomically without partially merging valid entries', async () => {
+    const job = deferredJob();
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob: vi.fn(() => job),
+    });
+    const input = document.querySelector('[data-testid="file-input"]');
+    setInputFiles(input, [hpglFile('existing.H01')]);
+    const originalOutputName = document.querySelector('[data-testid="output-name"]').value;
+    setInputFiles(input, [zipFile('invalid-item.zip')]);
+
+    job.resolve({
+      results: [sourceResult({
+        sourceName: 'invalid-item.zip',
+        items: [inputRecord('would-add.H01'), null],
+      })],
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('ZIPの展開に失敗しました');
+    });
+    expect(input.disabled).toBe(false);
+    expect(document.querySelector('[data-testid="drop-zone"]').disabled).toBe(false);
+    expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(false);
+    expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(1);
+    expect(document.body.textContent).toContain('existing.H01');
+    expect(document.body.textContent).not.toContain('would-add.H01');
+    expect(document.querySelector('[data-testid="output-name"]').value)
+      .toBe(originalOutputName);
   });
 
   it('seeds the DXF name from the first successfully added source once', async () => {

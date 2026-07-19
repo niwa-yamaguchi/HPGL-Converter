@@ -100,7 +100,7 @@ export function mountApp(root, deps = {}) {
           <span class="file-count" data-testid="file-count">0 ファイル</span>
         </div>
 
-        <input data-testid="file-input" type="file" multiple hidden aria-label="HPGLファイルを選択"
+        <input data-testid="file-input" type="file" multiple hidden aria-label="HPGLまたはZIPファイルを選択"
           accept=".hpgl,.hpg,.plt,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99,.zip">
         <button class="drop-zone" data-testid="drop-zone" type="button"
           aria-label="HPGLまたはZIPファイルを追加" aria-describedby="drop-help">
@@ -618,12 +618,49 @@ export function mountApp(root, deps = {}) {
     }
   }
 
+  function validateInputRecord(record) {
+    if (record === null || typeof record !== 'object'
+        || typeof record.name !== 'string' || record.name.length === 0
+        || !(record.blob instanceof Blob)
+        || !Number.isFinite(record.size) || record.size < 0
+        || record.blob.size !== record.size
+        || typeof record.identity !== 'string' || record.identity.length === 0) {
+      throw new TypeError('ZIP展開結果の入力レコードが不正です');
+    }
+  }
+
+  function validateSourceResults(results) {
+    if (!Array.isArray(results)) {
+      throw new TypeError('ZIP展開結果を読み込めませんでした');
+    }
+    for (const source of results) {
+      if (source === null || typeof source !== 'object'
+          || typeof source.sourceName !== 'string' || source.sourceName.length === 0
+          || !['hpgl', 'zip', 'unsupported'].includes(source.kind)
+          || !Array.isArray(source.items)
+          || (source.error !== null && !(source.error instanceof Error))
+          || source.ignored === null || typeof source.ignored !== 'object') {
+        throw new TypeError('ZIP展開結果の元ファイル情報が不正です');
+      }
+      for (const key of ['directories', 'unsupported', 'nestedArchives', 'unsafePaths']) {
+        const count = source.ignored[key];
+        if (!Number.isSafeInteger(count) || count < 0) {
+          throw new TypeError('ZIP展開結果の無視件数が不正です');
+        }
+      }
+      source.items.forEach(validateInputRecord);
+    }
+    return results;
+  }
+
   function mergeSourceResults(results) {
     const known = new Set(state.files.map(file => file.identity));
+    const additions = [];
     const notices = [];
     let added = 0;
+    let outputNameSource = null;
 
-    for (const source of Array.isArray(results) ? results : []) {
+    for (const source of results) {
       if (source.error) {
         const message = source.error instanceof Error && source.error.message
           ? source.error.message
@@ -640,13 +677,13 @@ export function mountApp(root, deps = {}) {
           continue;
         }
         known.add(item.identity);
-        state.files.push(item);
+        additions.push(item);
         sourceAdded += 1;
         added += 1;
       }
 
-      if (sourceAdded > 0) {
-        seedOutputName(source.sourceName);
+      if (sourceAdded > 0 && outputNameSource === null) {
+        outputNameSource = source.sourceName;
       } else if (source.kind === 'zip' && (source.items?.length ?? 0) === 0) {
         notices.push(`${source.sourceName} に対応HPGLがありません`);
       } else if (source.kind === 'unsupported') {
@@ -678,7 +715,11 @@ export function mountApp(root, deps = {}) {
     }
 
     if (added > 0) {
-      state.layerNames = assignLayerNames(state.files.map(file => file.name));
+      const nextFiles = [...state.files, ...additions];
+      const nextLayerNames = assignLayerNames(nextFiles.map(file => file.name));
+      state.files = nextFiles;
+      state.layerNames = nextLayerNames;
+      seedOutputName(outputNameSource);
       state.progressByIndex.clear();
       state.progressIndex = 0;
       clearResult();
@@ -699,14 +740,22 @@ export function mountApp(root, deps = {}) {
     if (state.destroyed || state.importToken !== token) {
       return;
     }
-    if (!Array.isArray(expansionResult?.results)) {
-      failImport(token, new TypeError('ZIP展開結果を読み込めませんでした'));
+    let results;
+    try {
+      results = validateSourceResults(expansionResult?.results);
+    } catch (error) {
+      failImport(token, error);
       return;
     }
     state.importing = false;
+    try {
+      mergeSourceResults(results);
+    } catch (error) {
+      failImport(token, error);
+      return;
+    }
     state.importJob = null;
     state.importToken = null;
-    mergeSourceResults(expansionResult.results);
   }
 
   function failImport(token, error) {
@@ -761,7 +810,7 @@ export function mountApp(root, deps = {}) {
       startImport(sources);
       return;
     }
-    mergeSourceResults(sources.map(source => {
+    mergeSourceResults(validateSourceResults(sources.map(source => {
       if (!isSupportedHpglName(source.name)) {
         return {
           sourceName: source.name,
@@ -788,7 +837,7 @@ export function mountApp(root, deps = {}) {
         },
         error: null,
       };
-    }));
+    })));
   }
 
   function renderDiagnostic(diagnostic) {
