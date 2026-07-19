@@ -1,5 +1,14 @@
 import './styles.css';
-import { fileIdentity, isSupportedHpglName, normalizeOutputName } from './files/file-policy.js';
+import {
+  defaultOutputName,
+  isSupportedHpglName,
+  isZipName,
+  normalizeOutputName,
+} from './files/file-policy.js';
+import { createNativeInputRecord } from './files/input-records.js';
+import {
+  createUploadExpansionJob as createDefaultUploadExpansionJob,
+} from './files/upload-expander.js';
 import { assignLayerNames } from './files/layer-names.js';
 import { renderViewer as renderDefaultViewer } from './viewer/canvas-renderer.js';
 import {
@@ -46,6 +55,8 @@ export function mountApp(root, deps = {}) {
   }
   const createConversionJob = deps.createConversionJob ?? createDefaultConversionJob;
   const createPreviewJob = deps.createPreviewJob ?? createDefaultPreviewJob;
+  const createUploadExpansionJob = deps.createUploadExpansionJob
+    ?? createDefaultUploadExpansionJob;
   const renderViewer = deps.renderViewer ?? renderDefaultViewer;
   const compareGeometries = deps.compareGeometrySets ?? compareGeometrySets;
   if (typeof createConversionJob !== 'function') {
@@ -53,6 +64,9 @@ export function mountApp(root, deps = {}) {
   }
   if (typeof createPreviewJob !== 'function') {
     throw new TypeError('createPreviewJob must be a function');
+  }
+  if (typeof createUploadExpansionJob !== 'function') {
+    throw new TypeError('createUploadExpansionJob must be a function');
   }
   if (typeof renderViewer !== 'function') {
     throw new TypeError('renderViewer must be a function');
@@ -72,6 +86,7 @@ export function mountApp(root, deps = {}) {
         <div class="privacy-card">
           <strong>ファイルは外部へ送信されません</strong>
           <span>このブラウザのメモリ内だけで処理します</span>
+          <span>ZIPもブラウザ内で展開します</span>
           <span>対応形式: ${SUPPORTED_EXTENSIONS}</span>
         </div>
       </header>
@@ -86,10 +101,10 @@ export function mountApp(root, deps = {}) {
         </div>
 
         <input data-testid="file-input" type="file" multiple hidden aria-label="HPGLファイルを選択"
-          accept=".hpgl,.hpg,.plt,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99">
+          accept=".hpgl,.hpg,.plt,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99,.zip">
         <button class="drop-zone" data-testid="drop-zone" type="button"
-          aria-label="HPGLファイルを追加" aria-describedby="drop-help">
-          <span class="drop-title" data-testid="drop-title">HPGLファイルをここへドロップ</span>
+          aria-label="HPGLまたはZIPファイルを追加" aria-describedby="drop-help">
+          <span class="drop-title" data-testid="drop-title">HPGLまたはZIPファイルをここへドロップ</span>
           <span id="drop-help" class="drop-help">または Enter / Space キーでファイル選択を開けます</span>
           <span class="drop-action" aria-hidden="true">ファイルを選択</span>
         </button>
@@ -192,6 +207,11 @@ export function mountApp(root, deps = {}) {
 
   const state = {
     files: [],
+    importing: false,
+    importJob: null,
+    importToken: null,
+    outputNameSeeded: false,
+    outputNameEdited: false,
     layerNames: [],
     progressByIndex: new Map(),
     progressIndex: 0,
@@ -530,7 +550,7 @@ export function mountApp(root, deps = {}) {
   }
 
   function removeFile(index) {
-    if (state.converting) {
+    if (state.importing || state.converting) {
       return;
     }
     const [removed] = state.files.splice(index, 1);
@@ -546,6 +566,7 @@ export function mountApp(root, deps = {}) {
   function renderFiles() {
     nodes.fileList.replaceChildren();
     nodes.fileCount.textContent = `${state.files.length} ファイル`;
+    const locked = state.importing || state.converting;
 
     if (state.files.length === 0) {
       const row = element('tr', 'empty-row');
@@ -571,7 +592,7 @@ export function mountApp(root, deps = {}) {
         const remove = element('button', 'icon-button', '削除');
         remove.type = 'button';
         remove.dataset.testid = 'remove-button';
-        remove.disabled = state.converting;
+        remove.disabled = locked;
         remove.setAttribute('aria-label', `${file.name} を削除`);
         remove.addEventListener('click', () => removeFile(index));
         actionCell.append(remove);
@@ -580,35 +601,81 @@ export function mountApp(root, deps = {}) {
       });
     }
 
-    nodes.input.disabled = state.converting;
-    nodes.dropZone.disabled = state.converting;
+    nodes.input.disabled = locked;
+    nodes.dropZone.disabled = locked;
     nodes.outputName.disabled = state.converting;
-    nodes.convert.disabled = state.converting || state.files.length === 0;
+    nodes.convert.disabled = locked || state.files.length === 0;
     nodes.cancel.hidden = !state.converting;
   }
 
-  function addFiles(fileList) {
-    if (state.converting) {
+  function seedOutputName(sourceName) {
+    if (state.outputNameSeeded) {
       return;
     }
-    const known = new Set(state.files.map(fileIdentity));
+    state.outputNameSeeded = true;
+    if (!state.outputNameEdited) {
+      nodes.outputName.value = defaultOutputName(sourceName);
+    }
+  }
+
+  function mergeSourceResults(results) {
+    const known = new Set(state.files.map(file => file.identity));
     const notices = [];
     let added = 0;
 
-    Array.from(fileList ?? []).forEach(file => {
-      if (!isSupportedHpglName(file.name)) {
-        notices.push(`${file.name} は対応していない形式です`);
-        return;
+    for (const source of Array.isArray(results) ? results : []) {
+      if (source.error) {
+        const message = source.error instanceof Error && source.error.message
+          ? source.error.message
+          : '不明なエラー';
+        notices.push(`${source.sourceName} を展開できませんでした: ${message}`);
+        continue;
       }
-      const identity = fileIdentity(file);
-      if (known.has(identity)) {
-        notices.push(`${file.name} はすでに追加されています`);
-        return;
+
+      let sourceAdded = 0;
+      let duplicateCount = 0;
+      for (const item of Array.isArray(source.items) ? source.items : []) {
+        if (known.has(item.identity)) {
+          duplicateCount += 1;
+          continue;
+        }
+        known.add(item.identity);
+        state.files.push(item);
+        sourceAdded += 1;
+        added += 1;
       }
-      known.add(identity);
-      state.files.push(file);
-      added += 1;
-    });
+
+      if (sourceAdded > 0) {
+        seedOutputName(source.sourceName);
+      } else if (source.kind === 'zip' && (source.items?.length ?? 0) === 0) {
+        notices.push(`${source.sourceName} に対応HPGLがありません`);
+      } else if (source.kind === 'unsupported') {
+        notices.push(`${source.sourceName} は対応していない形式です`);
+      }
+
+      if (duplicateCount > 0) {
+        if (source.kind === 'hpgl' && duplicateCount === 1) {
+          notices.push(`${source.sourceName} はすでに追加されています`);
+        } else {
+          notices.push(`${source.sourceName}: 重複 ${duplicateCount}件を無視しました`);
+        }
+      }
+
+      const ignored = source.ignored ?? {};
+      const ignoredDetails = [
+        ['ディレクトリ', ignored.directories],
+        ['非対応', ignored.unsupported],
+        ['ZIP内ZIP', ignored.nestedArchives],
+        ['不正パス', ignored.unsafePaths],
+      ]
+        .filter(([_label, count]) => number(count) > 0)
+        .map(([label, count]) => `${label} ${number(count)}件`);
+      if (ignoredDetails.length > 0 && source.kind === 'zip') {
+        notices.push(
+          `${source.sourceName}: ${ignoredDetails.join('、')}を無視しました`,
+        );
+      }
+    }
 
     if (added > 0) {
       state.layerNames = assignLayerNames(state.files.map(file => file.name));
@@ -617,12 +684,111 @@ export function mountApp(root, deps = {}) {
       clearResult();
       renderFiles();
       startPreview();
+    } else {
+      renderFiles();
     }
+
     if (notices.length > 0) {
       announce(notices.join('。'), 'warning');
     } else if (added > 0) {
       announce(`${added}件のファイルを追加しました。`);
     }
+  }
+
+  function finishImport(token, expansionResult) {
+    if (state.destroyed || state.importToken !== token) {
+      return;
+    }
+    if (!Array.isArray(expansionResult?.results)) {
+      failImport(token, new TypeError('ZIP展開結果を読み込めませんでした'));
+      return;
+    }
+    state.importing = false;
+    state.importJob = null;
+    state.importToken = null;
+    mergeSourceResults(expansionResult.results);
+  }
+
+  function failImport(token, error) {
+    if (state.destroyed || state.importToken !== token) {
+      return;
+    }
+    state.importing = false;
+    state.importJob = null;
+    state.importToken = null;
+    renderFiles();
+    if (error?.name === 'AbortError') {
+      announce('ZIPの展開をキャンセルしました。', 'warning');
+      return;
+    }
+    const message = error instanceof Error && error.message ? error.message : '不明なエラー';
+    announce(`ZIPの展開に失敗しました: ${message}`, 'error');
+  }
+
+  function startImport(sources) {
+    state.importing = true;
+    const token = Symbol('import');
+    state.importToken = token;
+    announce('ZIPを展開しています…', 'working');
+    renderFiles();
+
+    let job;
+    try {
+      job = createUploadExpansionJob(sources);
+      if (!job || typeof job.cancel !== 'function' || !job.promise) {
+        throw new TypeError('ZIP展開ジョブを開始できませんでした');
+      }
+      state.importJob = job;
+    } catch (error) {
+      failImport(token, error);
+      return;
+    }
+    Promise.resolve(job.promise).then(
+      result => finishImport(token, result),
+      error => failImport(token, error),
+    );
+  }
+
+  function handleUploads(fileList) {
+    if (state.importing || state.converting) {
+      return;
+    }
+    const sources = Array.from(fileList ?? []);
+    if (sources.length === 0) {
+      return;
+    }
+    if (sources.some(source => isZipName(source.name))) {
+      startImport(sources);
+      return;
+    }
+    mergeSourceResults(sources.map(source => {
+      if (!isSupportedHpglName(source.name)) {
+        return {
+          sourceName: source.name,
+          kind: 'unsupported',
+          items: [],
+          ignored: {
+            directories: 0,
+            unsupported: 1,
+            nestedArchives: 0,
+            unsafePaths: 0,
+          },
+          error: null,
+        };
+      }
+      return {
+        sourceName: source.name,
+        kind: 'hpgl',
+        items: [createNativeInputRecord(source)],
+        ignored: {
+          directories: 0,
+          unsupported: 0,
+          nestedArchives: 0,
+          unsafePaths: 0,
+        },
+        error: null,
+      };
+    }));
   }
 
   function renderDiagnostic(diagnostic) {
@@ -743,7 +909,7 @@ export function mountApp(root, deps = {}) {
   }
 
   function startConversion() {
-    if (state.converting || state.files.length === 0) {
+    if (state.importing || state.converting || state.files.length === 0) {
       return;
     }
     clearResult();
@@ -802,17 +968,17 @@ export function mountApp(root, deps = {}) {
   }
 
   listen(nodes.input, 'change', () => {
-    addFiles(nodes.input.files);
+    handleUploads(nodes.input.files);
     nodes.input.value = '';
   });
   listen(nodes.dropZone, 'click', () => {
-    if (!state.converting) {
+    if (!state.importing && !state.converting) {
       nodes.input.click();
     }
   });
   listen(nodes.dropZone, 'dragover', event => {
     event.preventDefault();
-    if (!state.converting) {
+    if (!state.importing && !state.converting) {
       nodes.dropZone.classList.add('is-dragging');
     }
   });
@@ -820,7 +986,10 @@ export function mountApp(root, deps = {}) {
   listen(nodes.dropZone, 'drop', event => {
     event.preventDefault();
     nodes.dropZone.classList.remove('is-dragging');
-    addFiles(event.dataTransfer?.files);
+    handleUploads(event.dataTransfer?.files);
+  });
+  listen(nodes.outputName, 'input', () => {
+    state.outputNameEdited = true;
   });
   listen(nodes.convert, 'click', startConversion);
   listen(nodes.viewerModeNormal, 'change', () => {
@@ -915,6 +1084,15 @@ export function mountApp(root, deps = {}) {
       state.destroyed = true;
       state.token = null;
       state.previewToken = null;
+      state.importToken = null;
+      if (state.importJob) {
+        try {
+          state.importJob.cancel();
+        } catch {
+          // Destruction is best-effort and must continue through every resource.
+        }
+        state.importJob = null;
+      }
       if (state.job) {
         try {
           state.job.cancel();

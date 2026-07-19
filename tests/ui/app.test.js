@@ -16,6 +16,40 @@ function hpglFile(name, content = 'PA0,0;', options = {}) {
   });
 }
 
+function zipFile(name) {
+  return new File(['zip bytes'], name, {
+    type: 'application/zip',
+    lastModified: 789,
+  });
+}
+
+function inputRecord(name, identity = `id:${name}`) {
+  const blob = new Blob(['PU;']);
+  return { name, blob, size: blob.size, identity };
+}
+
+function sourceResult({
+  sourceName,
+  kind = 'zip',
+  items = [],
+  ignored = {},
+  error = null,
+}) {
+  return {
+    sourceName,
+    kind,
+    items,
+    ignored: {
+      directories: 0,
+      unsupported: 0,
+      nestedArchives: 0,
+      unsafePaths: 0,
+      ...ignored,
+    },
+    error,
+  };
+}
+
 function setInputFiles(input, files) {
   Object.defineProperty(input, 'files', { configurable: true, value: files });
   input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -160,6 +194,173 @@ describe('mountApp', () => {
     expect(document.body.textContent).toContain('drawing.H01 はすでに追加されています');
   });
 
+  it('accepts ZIP and disables mutable file controls while expanding', async () => {
+    const job = deferredJob();
+    const createUploadExpansionJob = vi.fn(() => job);
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob,
+    });
+    const input = document.querySelector('[data-testid="file-input"]');
+    expect(input.accept).toContain('.zip');
+    setInputFiles(input, [hpglFile('existing.H01')]);
+
+    setInputFiles(input, [zipFile('drawings.zip')]);
+
+    expect(createUploadExpansionJob).toHaveBeenCalledWith([
+      expect.objectContaining({ name: 'drawings.zip' }),
+    ]);
+    expect(document.body.textContent).toContain('ZIPを展開しています');
+    expect(input.disabled).toBe(true);
+    expect(document.querySelector('[data-testid="drop-zone"]').disabled).toBe(true);
+    expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(true);
+    expect(document.querySelector('[data-testid="remove-button"]').disabled).toBe(true);
+
+    job.resolve({
+      results: [sourceResult({
+        sourceName: 'drawings.zip',
+        items: [inputRecord('parts/A.H01')],
+        ignored: {
+          directories: 1,
+          unsupported: 1,
+          nestedArchives: 1,
+          unsafePaths: 1,
+        },
+      })],
+    });
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('parts/A.H01'));
+    const archiveRow = [...document.querySelectorAll('[data-testid="file-row"]')]
+      .find(row => row.textContent.includes('parts/A.H01'));
+    expect(archiveRow.textContent).toContain('parts_A');
+    expect(document.body.textContent).toContain(
+      'ディレクトリ 1件、非対応 1件、ZIP内ZIP 1件、不正パス 1件を無視しました',
+    );
+    expect(input.disabled).toBe(false);
+  });
+
+  it('keeps successful source files when another ZIP in the upload fails', async () => {
+    const job = deferredJob();
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob: vi.fn(() => job),
+    });
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      zipFile('broken.zip'),
+      hpglFile('good.H01'),
+    ]);
+    job.resolve({
+      results: [
+        sourceResult({
+          sourceName: 'broken.zip',
+          error: new Error('破損したZIPです'),
+        }),
+        sourceResult({
+          sourceName: 'good.H01',
+          kind: 'hpgl',
+          items: [inputRecord('good.H01')],
+        }),
+      ],
+    });
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('good.H01'));
+    expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(1);
+    expect(document.body.textContent)
+      .toContain('broken.zip を展開できませんでした: 破損したZIPです');
+    expect(document.querySelector('[data-testid="output-name"]').value).toBe('good.dxf');
+  });
+
+  it('warns without adding a row when a ZIP has no supported HPGL', async () => {
+    const job = deferredJob();
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob: vi.fn(() => job),
+    });
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      zipFile('empty.zip'),
+    ]);
+    job.resolve({
+      results: [sourceResult({
+        sourceName: 'empty.zip',
+        ignored: { unsupported: 2 },
+      })],
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain('empty.zip に対応HPGLがありません');
+    });
+    expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(0);
+    expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
+  });
+
+  it('seeds the DXF name from the first successfully added source once', async () => {
+    const zipJob = deferredJob();
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob: vi.fn(() => zipJob),
+    });
+    const input = document.querySelector('[data-testid="file-input"]');
+    const output = document.querySelector('[data-testid="output-name"]');
+
+    setInputFiles(input, [zipFile('drawings.zip')]);
+    zipJob.resolve({
+      results: [sourceResult({
+        sourceName: 'drawings.zip',
+        items: [inputRecord('parts/A.H01')],
+      })],
+    });
+    await vi.waitFor(() => expect(output.value).toBe('drawings.dxf'));
+
+    setInputFiles(input, [hpglFile('later.H02')]);
+    expect(output.value).toBe('drawings.dxf');
+
+    while (document.querySelector('[data-testid="remove-button"]')) {
+      document.querySelector('[data-testid="remove-button"]').click();
+    }
+    setInputFiles(input, [hpglFile('after-clear.H03')]);
+    expect(output.value).toBe('drawings.dxf');
+  });
+
+  it('does not overwrite a name edited before the first successful upload', () => {
+    mount({ createConversionJob: vi.fn() });
+    const output = document.querySelector('[data-testid="output-name"]');
+    output.value = 'manual.dxf';
+    output.dispatchEvent(new Event('input', { bubbles: true }));
+
+    setInputFiles(
+      document.querySelector('[data-testid="file-input"]'),
+      [hpglFile('drawing.H01')],
+    );
+
+    expect(output.value).toBe('manual.dxf');
+  });
+
+  it('cancels an active ZIP expansion and ignores its stale completion when destroyed', async () => {
+    const job = deferredJob();
+    mount({
+      createConversionJob: vi.fn(),
+      createUploadExpansionJob: vi.fn(() => job),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      zipFile('pending.zip'),
+    ]);
+
+    mounted.destroy();
+    mounted = undefined;
+    job.resolve({
+      results: [sourceResult({
+        sourceName: 'pending.zip',
+        items: [inputRecord('stale.H01')],
+      })],
+    });
+    await flush();
+
+    expect(job.cancel).toHaveBeenCalledOnce();
+    expect(document.querySelector('#test-root').textContent).not.toContain('stale.H01');
+  });
+
   it('adds dropped files and recomputes case-insensitive layer suffixes after removal', () => {
     mount({ createConversionJob: vi.fn() });
     const zone = document.querySelector('[data-testid="drop-zone"]');
@@ -188,7 +389,12 @@ describe('mountApp', () => {
     setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
 
     expect(createPreviewJob).toHaveBeenCalledWith(
-      files,
+      files.map(file => expect.objectContaining({
+        name: file.name,
+        blob: file,
+        size: file.size,
+        identity: expect.any(String),
+      })),
       ['first', 'second'],
       expect.objectContaining({ onProgress: expect.any(Function) }),
     );
