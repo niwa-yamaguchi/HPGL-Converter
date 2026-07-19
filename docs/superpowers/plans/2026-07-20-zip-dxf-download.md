@@ -1113,7 +1113,9 @@ it('accepts ZIP and disables mutable file controls while expanding', async () =>
   await vi.waitFor(() => expect(document.body.textContent).toContain('parts/A.H01'));
   expect(document.querySelector('[data-testid="file-row"]').textContent)
     .toContain('parts_A');
-  expect(document.body.textContent).toContain('4件を無視');
+  expect(document.body.textContent).toContain(
+    'ディレクトリ 1件、非対応 1件、ZIP内ZIP 1件、不正パス 1件を無視しました',
+  );
   expect(input.disabled).toBe(false);
 });
 ```
@@ -1255,9 +1257,18 @@ function mergeSourceResults(results) {
     } else if (source.kind === 'unsupported') {
       notices.push(`${source.sourceName} は対応していない形式です`);
     }
-    const ignored = Object.values(source.ignored).reduce((sum, count) => sum + count, 0);
-    if (ignored > 0 && source.kind === 'zip') {
-      notices.push(`${source.sourceName}: ${ignored}件を無視しました`);
+    const ignoredDetails = [
+      ['ディレクトリ', source.ignored.directories],
+      ['非対応', source.ignored.unsupported],
+      ['ZIP内ZIP', source.ignored.nestedArchives],
+      ['不正パス', source.ignored.unsafePaths],
+    ]
+      .filter(([_label, count]) => count > 0)
+      .map(([label, count]) => `${label} ${count}件`);
+    if (ignoredDetails.length > 0 && source.kind === 'zip') {
+      notices.push(
+        `${source.sourceName}: ${ignoredDetails.join('、')}を無視しました`,
+      );
     }
   }
 
