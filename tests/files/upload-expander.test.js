@@ -69,4 +69,14 @@ describe('createUploadExpansionJob', () => {
     await expect(job.promise).rejects.toMatchObject({ name: 'AbortError' });
     expect(cancel).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["only HPGL", [file('drawing.H01')]],
+    ["HPGL and unsupported files", [file('drawing.H01'), file('notes.txt')]],
+  ])('rejects with AbortError when immediately cancelled for %s', async (_label, sources) => {
+    const job = createUploadExpansionJob(sources);
+    job.cancel();
+
+    await expect(job.promise).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });

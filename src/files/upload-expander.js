@@ -25,6 +25,7 @@ export function createUploadExpansionJob(sources, options = {}) {
   });
 
   const work = (async () => {
+    await Promise.resolve();
     const results = [];
     for (const source of sources) {
       if (cancelled) {
