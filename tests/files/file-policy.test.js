@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  defaultOutputName,
   fileIdentity,
+  isZipName,
   isSupportedHpglName,
   normalizeOutputName,
 } from '../../src/files/file-policy.js';
@@ -27,6 +29,31 @@ describe('isSupportedHpglName', () => {
       expect(isSupportedHpglName(name)).toBe(false);
     },
   );
+});
+
+describe('isZipName', () => {
+  it.each(['drawings.zip', 'DRAWINGS.ZIP'])('accepts ZIP name %s', name => {
+    expect(isZipName(name)).toBe(true);
+  });
+
+  it.each(['drawings.zip.txt', 'drawings.7z'])('rejects non-ZIP name %s', name => {
+    expect(isZipName(name)).toBe(false);
+  });
+});
+
+describe('defaultOutputName', () => {
+  it.each([
+    ['A.H01', 'A.dxf'],
+    ['drawings.zip', 'drawings.dxf'],
+    ['archive.part.ZIP', 'archive.part.dxf'],
+    ['folder/drawing.hpgl', 'drawing.dxf'],
+  ])('maps %s to %s', (sourceName, expected) => {
+    expect(defaultOutputName(sourceName)).toBe(expected);
+  });
+
+  it('falls back for a name without a usable stem', () => {
+    expect(defaultOutputName('.zip')).toBe('converted.dxf');
+  });
 });
 
 describe('normalizeOutputName', () => {
