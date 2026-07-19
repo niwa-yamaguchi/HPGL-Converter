@@ -56,7 +56,8 @@ export async function handlePreviewMessage(message, post) {
       const file = message.files[index];
       const layerName = message.layerNames[index];
       if (file === null || typeof file !== 'object' || typeof file.name !== 'string'
-          || typeof file.arrayBuffer !== 'function') {
+          || file.blob === null || typeof file.blob !== 'object'
+          || typeof file.blob.arrayBuffer !== 'function') {
         throw new TypeError(`Preview file ${index} is invalid`);
       }
       if (typeof layerName !== 'string') {
@@ -76,7 +77,7 @@ export async function handlePreviewMessage(message, post) {
 
       progress('reading');
       try {
-        const parsed = parseHpgl(new Uint8Array(await file.arrayBuffer()), {
+        const parsed = parseHpgl(new Uint8Array(await file.blob.arrayBuffer()), {
           fileName: file.name,
           layerName,
         });

@@ -25,7 +25,10 @@ class FakeWorker {
   }
 }
 
-const file = name => ({ name, arrayBuffer: async () => new ArrayBuffer(0) });
+const file = (name, source = '') => {
+  const blob = new Blob([source]);
+  return { name, blob, size: blob.size, identity: `id:${name}` };
+};
 
 function deferred() {
   let resolve;
@@ -57,7 +60,12 @@ describe('createConversionJob', () => {
     const secondRequest = secondWorker.messages[0];
 
     expect(harness.workerFactory).toHaveBeenCalledTimes(2);
-    expect(firstRequest).toMatchObject({ type: 'convert', files, layerNames: ['a'] });
+    expect(firstRequest).toMatchObject({
+      type: 'convert',
+      files: [{ name: 'a.hpgl', blob: files[0].blob }],
+      layerNames: ['a'],
+    });
+    expect(firstRequest.files[0]).not.toHaveProperty('identity');
     expect(typeof firstRequest.requestId).toBe('string');
     expect(firstRequest.requestId).not.toBe(secondRequest.requestId);
 
@@ -159,8 +167,8 @@ describe('converter worker protocol', () => {
       type: 'convert',
       requestId: 'sequential-read',
       files: [
-        { name: 'first.hpgl', arrayBuffer: firstArrayBuffer },
-        { name: 'second.hpgl', arrayBuffer: secondArrayBuffer },
+        { name: 'first.hpgl', blob: { arrayBuffer: firstArrayBuffer } },
+        { name: 'second.hpgl', blob: { arrayBuffer: secondArrayBuffer } },
       ],
       layerNames: ['first', 'second'],
     }, () => {});
@@ -179,18 +187,22 @@ describe('converter worker protocol', () => {
     const files = [
       {
         name: 'bad.hpgl',
-        async arrayBuffer() {
-          order.push('bad:start');
-          order.push('bad:end');
-          throw new Error('cannot read');
+        blob: {
+          async arrayBuffer() {
+            order.push('bad:start');
+            order.push('bad:end');
+            throw new Error('cannot read');
+          },
         },
       },
       {
         name: 'good.hpgl',
-        async arrayBuffer() {
-          order.push('good:start');
-          order.push('good:end');
-          return new TextEncoder().encode('SP6;PD40,0;PU;').buffer;
+        blob: {
+          async arrayBuffer() {
+            order.push('good:start');
+            order.push('good:end');
+            return new TextEncoder().encode('SP6;PD40,0;PU;').buffer;
+          },
         },
       },
     ];

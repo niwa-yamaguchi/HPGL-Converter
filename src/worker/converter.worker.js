@@ -36,7 +36,8 @@ export async function handleConversionMessage(message, post) {
       const file = message.files[index];
       const layerName = message.layerNames[index];
       if (file === null || typeof file !== 'object' || typeof file.name !== 'string'
-          || typeof file.arrayBuffer !== 'function') {
+          || file.blob === null || typeof file.blob !== 'object'
+          || typeof file.blob.arrayBuffer !== 'function') {
         throw new TypeError(`Conversion file ${index} is invalid`);
       }
       if (typeof layerName !== 'string') {
@@ -54,7 +55,7 @@ export async function handleConversionMessage(message, post) {
         },
       });
       try {
-        const buffer = await file.arrayBuffer();
+        const buffer = await file.blob.arrayBuffer();
         inputs.push({ name: file.name, layerName, data: new Uint8Array(buffer) });
       } catch (error) {
         inputs.push({

@@ -25,10 +25,10 @@ class FakeWorker {
   }
 }
 
-const file = (name, source = '') => ({
-  name,
-  arrayBuffer: async () => new TextEncoder().encode(source).buffer,
-});
+const file = (name, source = '') => {
+  const blob = new Blob([source]);
+  return { name, blob, size: blob.size, identity: `id:${name}` };
+};
 
 function setup(options = {}) {
   const worker = new FakeWorker();
@@ -44,7 +44,12 @@ describe('createPreviewJob', () => {
     const job = createPreviewJob(files, ['a'], harness.options);
     const request = harness.worker.messages[0];
 
-    expect(request).toMatchObject({ type: 'preview', files, layerNames: ['a'] });
+    expect(request).toMatchObject({
+      type: 'preview',
+      files: [{ name: 'a.hpgl', blob: files[0].blob }],
+      layerNames: ['a'],
+    });
+    expect(request.files[0]).not.toHaveProperty('identity');
     expect(typeof request.requestId).toBe('string');
     harness.worker.emit({
       type: 'progress', requestId: 'another-request', event: { index: 99 },
@@ -129,16 +134,20 @@ describe('preview worker protocol', () => {
     const files = [
       {
         name: 'bad.hpgl',
-        async arrayBuffer() {
-          order.push('bad');
-          throw new Error('cannot read');
+        blob: {
+          async arrayBuffer() {
+            order.push('bad');
+            throw new Error('cannot read');
+          },
         },
       },
       {
         name: 'good.hpgl',
-        async arrayBuffer() {
-          order.push('good');
-          return new TextEncoder().encode('PD40,0;PU;').buffer;
+        blob: {
+          async arrayBuffer() {
+            order.push('good');
+            return new TextEncoder().encode('PD40,0;PU;').buffer;
+          },
         },
       },
     ];

@@ -1,4 +1,5 @@
 import ConverterWorker from './converter.worker.js?worker&inline';
+import { toWorkerInput } from '../files/input-records.js';
 
 let nextRequestId = 0;
 
@@ -12,10 +13,11 @@ function validateArguments(files, layerNames, options) {
   if (files.length !== layerNames.length) {
     throw new RangeError('Conversion files and layerNames must have the same length');
   }
-  files.forEach((file, index) => {
-    if (file === null || typeof file !== 'object' || typeof file.name !== 'string'
-        || typeof file.arrayBuffer !== 'function') {
-      throw new TypeError(`Conversion file ${index} is invalid`);
+  const workerFiles = files.map((file, index) => {
+    try {
+      return toWorkerInput(file);
+    } catch (error) {
+      throw new TypeError(`Conversion file ${index} is invalid`, { cause: error });
     }
   });
   layerNames.forEach((layerName, index) => {
@@ -32,6 +34,7 @@ function validateArguments(files, layerNames, options) {
   if (options.workerFactory !== undefined && typeof options.workerFactory !== 'function') {
     throw new TypeError('Conversion workerFactory must be a function');
   }
+  return workerFiles;
 }
 
 function nativeWorkerError(event) {
@@ -44,7 +47,7 @@ function nativeWorkerError(event) {
 }
 
 export function createConversionJob(files, layerNames, options = {}) {
-  validateArguments(files, layerNames, options);
+  const workerFiles = validateArguments(files, layerNames, options);
 
   const workerFactory = options.workerFactory ?? (() => new ConverterWorker());
   const worker = workerFactory();
@@ -98,7 +101,7 @@ export function createConversionJob(files, layerNames, options = {}) {
   };
 
   try {
-    worker.postMessage({ type: 'convert', requestId, files, layerNames });
+    worker.postMessage({ type: 'convert', requestId, files: workerFiles, layerNames });
   } catch (error) {
     settle(rejectPromise, error instanceof Error ? error : new Error('Worker post failed'));
   }
