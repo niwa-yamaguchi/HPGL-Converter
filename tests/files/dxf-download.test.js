@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { triggerDxfDownload } from '../../src/files/dxf-download.js';
 
 describe('triggerDxfDownload', () => {
   beforeEach(() => {
     document.body.replaceChildren();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('clicks a detached DXF download and revokes its Blob URL', () => {
@@ -63,5 +67,41 @@ describe('triggerDxfDownload', () => {
       { documentRef: document, urlApi },
     )).toThrow('append blocked');
     expect(urlApi.revokeObjectURL).toHaveBeenCalledWith('blob:append-failed');
+  });
+
+  it('revokes the URL when creating the anchor throws', () => {
+    const urlApi = {
+      createObjectURL: vi.fn(() => 'blob:create-failed'),
+      revokeObjectURL: vi.fn(),
+    };
+    const documentRef = {
+      createElement: vi.fn(() => { throw new Error('create blocked'); }),
+    };
+
+    expect(() => triggerDxfDownload(
+      new ArrayBuffer(0),
+      'drawing.dxf',
+      { documentRef, urlApi },
+    )).toThrow('create blocked');
+    expect(urlApi.revokeObjectURL).toHaveBeenCalledWith('blob:create-failed');
+  });
+
+  it('revokes the URL when removing the anchor throws', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'remove')
+      .mockImplementation(() => { throw new Error('remove blocked'); });
+    const urlApi = {
+      createObjectURL: vi.fn(() => 'blob:remove-failed'),
+      revokeObjectURL: vi.fn(),
+    };
+
+    expect(() => triggerDxfDownload(
+      new ArrayBuffer(0),
+      'drawing.dxf',
+      { documentRef: document, urlApi },
+    )).toThrow('remove blocked');
+    expect(click).toHaveBeenCalledOnce();
+    expect(urlApi.revokeObjectURL).toHaveBeenCalledWith('blob:remove-failed');
   });
 });
