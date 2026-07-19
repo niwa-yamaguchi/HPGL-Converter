@@ -62,6 +62,21 @@ function mutateZipHeaders(source, {
   return bytes;
 }
 
+function mutateZipOriginalSizes(source, originalSize) {
+  const bytes = source.slice();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let offset = 0; offset <= bytes.length - 28; offset += 1) {
+    const signature = view.getUint32(offset, true);
+    if (signature === 0x04034b50) {
+      view.setUint32(offset + 22, originalSize, true);
+    }
+    if (signature === 0x02014b50) {
+      view.setUint32(offset + 24, originalSize, true);
+    }
+  }
+  return bytes;
+}
+
 describe('normalizeZipEntryPath', () => {
   it.each([
     ['parts\\A.H01', 'parts/A.H01'],
@@ -105,6 +120,19 @@ describe('createZipExpansionJob', () => {
     ]);
   });
 
+  it('reads bytes by the original ZIP name and exposes the normalized path', async () => {
+    const source = zipFile({
+      'parts\\A.H01': strToU8('PD40,0;PU;'),
+    });
+
+    const result = await createZipExpansionJob(source).promise;
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].name).toBe('parts/A.H01');
+    expect(new Uint8Array(await result.items[0].blob.arrayBuffer()))
+      .toEqual(strToU8('PD40,0;PU;'));
+  });
+
   it('keeps Japanese paths and counts ignored entry classes', async () => {
     const source = zipFile({
       '部品/図面.H01': strToU8('PU;'),
@@ -146,6 +174,85 @@ describe('createZipExpansionJob', () => {
     });
 
     await expect(job.promise).rejects.toMatchObject({ code });
+  });
+
+  it('rejects a stored entry whose compressed and expanded sizes disagree', async () => {
+    const valid = zipSync({
+      'A.H01': [strToU8('PU;'), { level: 0 }],
+    });
+    const source = new File(
+      [mutateZipOriginalSizes(valid, 1)],
+      'stored-size-lie.zip',
+      { lastModified: 123 },
+    );
+
+    await expect(createZipExpansionJob(source).promise)
+      .rejects.toMatchObject({ code: 'ZIP_INVALID' });
+  });
+
+  it('rejects a DEFLATE size lie that exceeds the per-entry limit', async () => {
+    const valid = zipSync({
+      'A.H01': [strToU8('PU;'), { level: 9 }],
+    });
+    const source = new File(
+      [mutateZipOriginalSizes(valid, 1)],
+      'deflate-entry-size-lie.zip',
+      { lastModified: 123 },
+    );
+
+    await expect(createZipExpansionJob(source, {
+      limits: {
+        maxArchiveBytes: 1_000_000,
+        maxEntries: 100,
+        maxEntryBytes: 2,
+        maxTotalBytes: 1_000_000,
+      },
+    }).promise).rejects.toMatchObject({ code: 'ZIP_ENTRY_TOO_LARGE' });
+  });
+
+  it('rejects DEFLATE size lies that exceed the actual total limit', async () => {
+    const valid = zipSync({
+      'A.H01': [strToU8('PU;'), { level: 9 }],
+      'B.H02': [strToU8('PU;'), { level: 9 }],
+    });
+    const source = new File(
+      [mutateZipOriginalSizes(valid, 1)],
+      'deflate-total-size-lie.zip',
+      { lastModified: 123 },
+    );
+
+    await expect(createZipExpansionJob(source, {
+      limits: {
+        maxArchiveBytes: 1_000_000,
+        maxEntries: 100,
+        maxEntryBytes: 10,
+        maxTotalBytes: 4,
+      },
+    }).promise).rejects.toMatchObject({ code: 'ZIP_TOTAL_TOO_LARGE' });
+  });
+
+  it('rejects a DEFLATE bomb before the collecting unzip implementation runs', async () => {
+    const valid = zipSync({
+      'A.H01': [new Uint8Array(2 * 1024 * 1024), { level: 9 }],
+    });
+    const source = new File(
+      [mutateZipOriginalSizes(valid, 1)],
+      'deflate-bomb.zip',
+      { lastModified: 123 },
+    );
+    const unzipImpl = () => {
+      throw new Error('collecting unzip must not run');
+    };
+
+    await expect(createZipExpansionJob(source, {
+      limits: {
+        maxArchiveBytes: 1_000_000,
+        maxEntries: 100,
+        maxEntryBytes: 1024 * 1024,
+        maxTotalBytes: 10 * 1024 * 1024,
+      },
+      unzipImpl,
+    }).promise).rejects.toMatchObject({ code: 'ZIP_ENTRY_TOO_LARGE' });
   });
 
   it('rejects corrupt data as ZIP_INVALID', async () => {
@@ -203,5 +310,64 @@ describe('createZipExpansionJob', () => {
 
     await expect(job.promise).rejects.toMatchObject({ name: 'AbortError' });
     expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  it('rejects record creation failures as ZIP_INVALID', async () => {
+    const unzipImpl = (_bytes, { filter }, callback) => {
+      filter({ name: 'A.H01', originalSize: 3 });
+      queueMicrotask(() => callback(null, {}));
+      return () => {};
+    };
+    const source = zipFile({ 'A.H01': strToU8('PU;') });
+
+    await expect(createZipExpansionJob(source, { unzipImpl }).promise)
+      .rejects.toMatchObject({ code: 'ZIP_INVALID' });
+  });
+
+  it('rechecks the actual extracted entry size', async () => {
+    const unzipImpl = (_bytes, { filter }, callback) => {
+      filter({ name: 'A.H01', originalSize: 1 });
+      queueMicrotask(() => callback(null, {
+        'A.H01': strToU8('PU;'),
+      }));
+      return () => {};
+    };
+    const source = zipFile({ 'A.H01': new Uint8Array([1]) });
+
+    await expect(createZipExpansionJob(source, {
+      limits: {
+        maxArchiveBytes: 1_000_000,
+        maxEntries: 100,
+        maxEntryBytes: 2,
+        maxTotalBytes: 1_000_000,
+      },
+      unzipImpl,
+    }).promise).rejects.toMatchObject({ code: 'ZIP_ENTRY_TOO_LARGE' });
+  });
+
+  it('rechecks the actual extracted total size', async () => {
+    const unzipImpl = (_bytes, { filter }, callback) => {
+      filter({ name: 'A.H01', originalSize: 1 });
+      filter({ name: 'B.H02', originalSize: 1 });
+      queueMicrotask(() => callback(null, {
+        'A.H01': strToU8('PU;'),
+        'B.H02': strToU8('PU;'),
+      }));
+      return () => {};
+    };
+    const source = zipFile({
+      'A.H01': new Uint8Array([1]),
+      'B.H02': new Uint8Array([1]),
+    });
+
+    await expect(createZipExpansionJob(source, {
+      limits: {
+        maxArchiveBytes: 1_000_000,
+        maxEntries: 100,
+        maxEntryBytes: 10,
+        maxTotalBytes: 4,
+      },
+      unzipImpl,
+    }).promise).rejects.toMatchObject({ code: 'ZIP_TOTAL_TOO_LARGE' });
   });
 });
