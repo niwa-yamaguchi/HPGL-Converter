@@ -17,7 +17,7 @@ import {
 import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-client.js';
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
 
-const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .plt / .h01〜.h99';
+const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .plt / .plt1〜.plt99 / .h01〜.h99';
 const MAX_VISIBLE_DIAGNOSTICS = 100;
 const VIEWER_COLORS = [
   '#2f80ed', '#e67e22', '#27ae60', '#9b51e0',
@@ -101,7 +101,7 @@ export function mountApp(root, deps = {}) {
         </div>
 
         <input data-testid="file-input" type="file" multiple hidden aria-label="HPGLまたはZIPファイルを選択"
-          accept=".hpgl,.hpg,.plt,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99,.zip">
+          accept=".hpgl,.hpg,.plt,.plt1,.plt2,.plt3,.plt4,.plt5,.plt6,.plt7,.plt8,.plt9,.plt10,.plt11,.plt12,.plt13,.plt14,.plt15,.plt16,.plt17,.plt18,.plt19,.plt20,.plt21,.plt22,.plt23,.plt24,.plt25,.plt26,.plt27,.plt28,.plt29,.plt30,.plt31,.plt32,.plt33,.plt34,.plt35,.plt36,.plt37,.plt38,.plt39,.plt40,.plt41,.plt42,.plt43,.plt44,.plt45,.plt46,.plt47,.plt48,.plt49,.plt50,.plt51,.plt52,.plt53,.plt54,.plt55,.plt56,.plt57,.plt58,.plt59,.plt60,.plt61,.plt62,.plt63,.plt64,.plt65,.plt66,.plt67,.plt68,.plt69,.plt70,.plt71,.plt72,.plt73,.plt74,.plt75,.plt76,.plt77,.plt78,.plt79,.plt80,.plt81,.plt82,.plt83,.plt84,.plt85,.plt86,.plt87,.plt88,.plt89,.plt90,.plt91,.plt92,.plt93,.plt94,.plt95,.plt96,.plt97,.plt98,.plt99,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99,.zip">
         <button class="drop-zone" data-testid="drop-zone" type="button"
           aria-label="HPGLまたはZIPファイルを追加" aria-describedby="drop-help">
           <span class="drop-title" data-testid="drop-title">HPGLまたはZIPファイルをここへドロップ</span>

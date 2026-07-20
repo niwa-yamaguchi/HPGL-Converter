@@ -1,4 +1,4 @@
-const INPUT_PATTERN = /\.(?:hpgl|hpg|plt|h(?:0[1-9]|[1-9]\d))$/i;
+const INPUT_PATTERN = /\.(?:hpgl|hpg|plt(?:[1-9]|[1-9]\d)?|h(?:0[1-9]|[1-9]\d))$/i;
 const ZIP_PATTERN = /\.zip$/i;
 
 export const isSupportedHpglName = name => INPUT_PATTERN.test(name);

@@ -19,11 +19,17 @@ describe('isSupportedHpglName', () => {
     'drawing.h01',
     'drawing.H99',
     'drawing.h99',
+    'drawing.plt1',
+    'drawing.PLT1',
+    'drawing.plt9',
+    'drawing.plt10',
+    'drawing.plt99',
+    'drawing.PLT99',
   ])('accepts supported HPGL name %s case-insensitively', name => {
     expect(isSupportedHpglName(name)).toBe(true);
   });
 
-  it.each(['drawing.H00', 'drawing.H100', 'drawing.txt'])(
+  it.each(['drawing.H00', 'drawing.H100', 'drawing.txt', 'drawing.plt0', 'drawing.plt100'])(
     'rejects unsupported name %s',
     name => {
       expect(isSupportedHpglName(name)).toBe(false);
