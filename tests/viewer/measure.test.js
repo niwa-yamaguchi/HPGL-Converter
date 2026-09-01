@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pointToGeometryDistance, pickGeometry } from '../../src/viewer/measure.js';
+import { pointToGeometryDistance, pickGeometry, minimumDistance } from '../../src/viewer/measure.js';
 
 const line = points => ({ type: 'line', points });
 const polyline = points => ({ type: 'polyline', points });
@@ -91,5 +91,55 @@ describe('pickGeometry', () => {
     expect(() => pickGeometry(null, [0, 0], 1)).toThrow(TypeError);
     expect(() => pickGeometry(candidates, [0, 0], -1)).toThrow(RangeError);
     expect(() => pickGeometry([{}], [0, 0], 1)).toThrow(TypeError);
+  });
+});
+
+const consistent = result => {
+  expect(Math.hypot(result.pointA[0] - result.pointB[0], result.pointA[1] - result.pointB[1]))
+    .toBeCloseTo(result.distance, 9);
+};
+
+describe('minimumDistance between segments', () => {
+  it('measures parallel segments', () => {
+    const result = minimumDistance(line([[0, 0], [10, 0]]), line([[0, 3], [10, 3]]));
+    expect(result.distance).toBeCloseTo(3, 9);
+    consistent(result);
+  });
+
+  it('returns zero for crossing segments', () => {
+    const result = minimumDistance(line([[0, 0], [10, 10]]), line([[0, 10], [10, 0]]));
+    expect(result.distance).toBe(0);
+    expect(result.pointA).toEqual(result.pointB);
+    expect(result.pointA[0]).toBeCloseTo(5, 9);
+    expect(result.pointA[1]).toBeCloseTo(5, 9);
+  });
+
+  it('measures collinear segments through their endpoints', () => {
+    const result = minimumDistance(line([[0, 0], [1, 0]]), line([[3, 0], [4, 0]]));
+    expect(result.distance).toBeCloseTo(2, 9);
+    consistent(result);
+  });
+
+  it('measures a T shaped gap', () => {
+    const result = minimumDistance(line([[0, 0], [10, 0]]), line([[5, 2], [5, 8]]));
+    expect(result.distance).toBeCloseTo(2, 9);
+    expect(result.pointA[0]).toBeCloseTo(5, 9);
+    consistent(result);
+  });
+
+  it('finds the closest middle segment of a polyline', () => {
+    const result = minimumDistance(
+      polyline([[0, 0], [10, 0], [10, 10], [0, 10]]),
+      line([[12, 5], [14, 5]]),
+    );
+    expect(result.distance).toBeCloseTo(2, 9);
+    expect(result.pointA).toEqual([10, 5]);
+    expect(result.pointB).toEqual([12, 5]);
+  });
+
+  it('rejects text geometry', () => {
+    const text = { type: 'text', point: [0, 0], text: 'A', height: 1, rotation: 0 };
+    expect(() => minimumDistance(text, line([[0, 0], [1, 1]]))).toThrow(TypeError);
+    expect(() => minimumDistance(line([[0, 0], [1, 1]]), text)).toThrow(TypeError);
   });
 });

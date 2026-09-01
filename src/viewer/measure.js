@@ -133,3 +133,60 @@ export function pickGeometry(candidates, worldPoint, tolerance) {
   });
   return best;
 }
+
+const cross = (ax, ay, bx, by) => ax * by - ay * bx;
+
+const better = (best, candidate) => (best === null || candidate.distance < best.distance
+  ? candidate
+  : best);
+
+function segmentSegment(first, second) {
+  const d1x = first.b[0] - first.a[0];
+  const d1y = first.b[1] - first.a[1];
+  const d2x = second.b[0] - second.a[0];
+  const d2y = second.b[1] - second.a[1];
+  const denominator = cross(d1x, d1y, d2x, d2y);
+  if (Math.abs(denominator) > EPSILON) {
+    const gapX = second.a[0] - first.a[0];
+    const gapY = second.a[1] - first.a[1];
+    const t = cross(gapX, gapY, d2x, d2y) / denominator;
+    const u = cross(gapX, gapY, d1x, d1y) / denominator;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+      const point = [first.a[0] + d1x * t, first.a[1] + d1y * t];
+      return { distance: 0, pointA: point, pointB: [...point] };
+    }
+  }
+
+  let best = null;
+  [first.a, first.b].forEach(point => {
+    const found = pointSegment(point, second);
+    best = better(best, { distance: found.distance, pointA: [...point], pointB: found.point });
+  });
+  [second.a, second.b].forEach(point => {
+    const found = pointSegment(point, first);
+    best = better(best, { distance: found.distance, pointA: found.point, pointB: [...point] });
+  });
+  return best;
+}
+
+const elementDistance = (first, second) => {
+  if (first.kind === 'segment' && second.kind === 'segment') {
+    return segmentSegment(first, second);
+  }
+  throw new TypeError('Unsupported element combination');
+};
+
+export function minimumDistance(a, b) {
+  const elementsA = toElements(a);
+  const elementsB = toElements(b);
+  let best = null;
+  for (const first of elementsA) {
+    for (const second of elementsB) {
+      best = better(best, elementDistance(first, second));
+      if (best.distance === 0) {
+        return best;
+      }
+    }
+  }
+  return best;
+}
