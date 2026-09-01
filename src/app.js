@@ -26,6 +26,7 @@ const VIEWER_COLORS = [
   '#2f80ed', '#e67e22', '#27ae60', '#9b51e0',
   '#eb5757', '#00a6a6', '#f2c94c', '#f299c2',
 ];
+const BLINK_INTERVAL = 500;
 const CLICK_MOVE_LIMIT = 4;
 const PICK_RADIUS = 8;
 const GEOMETRY_LABELS = {
@@ -248,6 +249,8 @@ export function mountApp(root, deps = {}) {
     selection: [],
     measurement: null,
     measureFailed: false,
+    blinkOn: true,
+    blinkTimer: null,
   };
   const listeners = [];
   let viewerResizeObserver = null;
@@ -353,6 +356,7 @@ export function mountApp(root, deps = {}) {
       segment: state.measurement
         ? [state.measurement.pointA, state.measurement.pointB]
         : null,
+      highlightOn: state.blinkOn,
     };
   }
 
@@ -376,7 +380,31 @@ export function mountApp(root, deps = {}) {
     );
   }
 
+  function stopBlink() {
+    if (state.blinkTimer === null) {
+      return;
+    }
+    clearInterval(state.blinkTimer);
+    state.blinkTimer = null;
+    state.blinkOn = true;
+  }
+
+  function startBlink() {
+    // Every new selection starts bright, whether or not a timer is already running.
+    state.blinkOn = true;
+    // A steady highlight is the accessible fallback, and the only one worth animating.
+    if (state.blinkTimer !== null
+      || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true) {
+      return;
+    }
+    state.blinkTimer = setInterval(() => {
+      state.blinkOn = !state.blinkOn;
+      scheduleViewerRender();
+    }, BLINK_INTERVAL);
+  }
+
   function clearSelection() {
+    stopBlink();
     if (state.selection.length === 0 && state.measurement === null && !state.measureFailed) {
       return;
     }
@@ -388,6 +416,7 @@ export function mountApp(root, deps = {}) {
   }
 
   function failMeasure() {
+    stopBlink();
     state.selection = [];
     state.measurement = null;
     state.measureFailed = true;
@@ -415,6 +444,7 @@ export function mountApp(root, deps = {}) {
       state.selection = [candidate];
       state.measurement = null;
     }
+    startBlink();
     renderMeasure();
     scheduleViewerRender();
   }
@@ -1332,6 +1362,7 @@ export function mountApp(root, deps = {}) {
         }
         state.previewJob = null;
       }
+      stopBlink();
       if (state.frameRequest !== null) {
         cancelAnimationFrame(state.frameRequest);
         state.frameRequest = null;

@@ -44,14 +44,15 @@ const renderGeometry = (context, geometry, viewport, screenPoint) => {
   }
 };
 
-const HIGHLIGHT_COLOR = '#111827';
+const HIGHLIGHT_COLOR = '#ffffff';
+const HIGHLIGHT_DIM_ALPHA = 0.3;
 const MARKER_RADIUS = 3.5;
 
 const renderOverlay = (context, overlay, viewport, screenPoint) => {
   if (!overlay) {
     return;
   }
-  context.globalAlpha = 1;
+  context.globalAlpha = overlay.highlightOn === false ? HIGHLIGHT_DIM_ALPHA : 1;
   context.strokeStyle = HIGHLIGHT_COLOR;
   context.fillStyle = HIGHLIGHT_COLOR;
   context.lineWidth = 3.5;

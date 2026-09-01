@@ -108,7 +108,8 @@ describe('measurement overlay', () => {
 
     expect(context.setLineDash).toHaveBeenCalledWith([6, 4]);
     expect(context.setLineDash).toHaveBeenLastCalledWith([]);
-    expect(context.strokeStyle).toBe('#111827');
+    expect(context.strokeStyle).toBe('#ffffff');
+    expect(context.globalAlpha).toBe(1);
     expect(context.arc).toHaveBeenNthCalledWith(1, 150, 170, 3.5, 0, Math.PI * 2);
     expect(context.arc).toHaveBeenNthCalledWith(2, 150, 130, 3.5, 0, Math.PI * 2);
     expect(context.fill).toHaveBeenCalledTimes(2);
@@ -123,6 +124,22 @@ describe('measurement overlay', () => {
 
     expect(context.setLineDash).not.toHaveBeenCalledWith([6, 4]);
     expect(context.fill).toHaveBeenCalledTimes(1);
+  });
+
+  it('dims the whole overlay while the blink is off', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: {
+        highlights: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+        segment: [[0, 0], [0, 4]],
+        highlightOn: false,
+      },
+    });
+
+    expect(context.strokeStyle).toBe('#ffffff');
+    expect(context.globalAlpha).toBe(0.3);
+    expect(context.fill).toHaveBeenCalledTimes(2);
   });
 
   it('leaves rendering unchanged when no overlay is given', () => {

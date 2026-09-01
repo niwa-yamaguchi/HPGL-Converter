@@ -1187,6 +1187,90 @@ describe('mountApp', () => {
       .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
   });
 
+  function stubBlinkTimers() {
+    const ticks = [];
+    const cleared = [];
+    vi.stubGlobal('setInterval', vi.fn((callback, delay) => {
+      ticks.push({ callback, delay });
+      return ticks.length;
+    }));
+    vi.stubGlobal('clearInterval', vi.fn(id => cleared.push(id)));
+    return { ticks, cleared };
+  }
+
+  it('blinks the selection highlight while something is selected', async () => {
+    const timers = stubBlinkTimers();
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true);
+    expect(timers.ticks).toHaveLength(1);
+
+    timers.ticks[0].callback();
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(false),
+    );
+
+    timers.ticks[0].callback();
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true),
+    );
+  });
+
+  it('stops blinking when the selection is cleared', async () => {
+    const timers = stubBlinkTimers();
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    expect(timers.ticks).toHaveLength(1);
+
+    canvas.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
+
+    expect(timers.cleared).toEqual([1]);
+  });
+
+  it('reuses one blink timer and shows each new selection bright', async () => {
+    const timers = stubBlinkTimers();
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    timers.ticks[0].callback();
+    clickCanvas(canvas, 200, 64);
+
+    expect(timers.ticks).toHaveLength(1);
+    expect(timers.cleared).toEqual([]);
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true),
+    );
+  });
+
+  it('stops blinking when the app is destroyed', async () => {
+    const timers = stubBlinkTimers();
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    mounted.destroy();
+    mounted = undefined;
+
+    expect(timers.cleared).toEqual([1]);
+  });
+
+  it('keeps the highlight steady when reduced motion is preferred', async () => {
+    const timers = stubBlinkTimers();
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true);
+    expect(timers.ticks).toEqual([]);
+  });
+
   it('clears the selection on Escape', async () => {
     const canvas = await mountWithTwoLines();
     clickCanvas(canvas, 200, 176);
