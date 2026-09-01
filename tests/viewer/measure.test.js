@@ -143,3 +143,83 @@ describe('minimumDistance between segments', () => {
     expect(() => minimumDistance(line([[0, 0], [1, 1]]), text)).toThrow(TypeError);
   });
 });
+
+describe('minimumDistance with arcs and circles', () => {
+  it('measures a segment outside a circle along the radial direction', () => {
+    const result = minimumDistance(line([[10, -5], [10, 5]]), circle([0, 0], 5));
+    expect(result.distance).toBeCloseTo(5, 9);
+    expect(result.pointA).toEqual([10, 0]);
+    expect(result.pointB[0]).toBeCloseTo(5, 9);
+    expect(result.pointB[1]).toBeCloseTo(0, 9);
+  });
+
+  it('measures a segment fully inside a circle from its endpoint', () => {
+    const result = minimumDistance(line([[-1, 0], [1, 0]]), circle([0, 0], 5));
+    expect(result.distance).toBeCloseTo(4, 9);
+    consistent(result);
+  });
+
+  it('returns zero when a segment crosses the circle', () => {
+    const result = minimumDistance(line([[0, 0], [10, 0]]), circle([0, 0], 5));
+    expect(result.distance).toBe(0);
+    expect(result.pointA[0]).toBeCloseTo(5, 9);
+    expect(result.pointA[1]).toBeCloseTo(0, 9);
+  });
+
+  it('does not return zero when the crossing angle is outside the arc sweep', () => {
+    const result = minimumDistance(line([[-10, 0], [0, 0]]), arc([0, 0], 5, 0, 90));
+    expect(result.distance).toBeCloseTo(5, 9);
+    consistent(result);
+  });
+
+  it('falls back to arc endpoints when the sweep faces away', () => {
+    const result = minimumDistance(line([[0, -10], [10, -10]]), arc([0, 0], 5, 0, 90));
+    expect(result.distance).toBeCloseTo(10, 9);
+    consistent(result);
+  });
+
+  it('measures separated circles along the line of centres', () => {
+    const result = minimumDistance(circle([0, 0], 2), circle([10, 0], 3));
+    expect(result.distance).toBeCloseTo(5, 9);
+    consistent(result);
+  });
+
+  it('measures a circle contained in another circle', () => {
+    const result = minimumDistance(circle([0, 0], 10), circle([2, 0], 3));
+    expect(result.distance).toBeCloseTo(5, 9);
+    consistent(result);
+  });
+
+  it('measures concentric circles by their radius difference', () => {
+    const result = minimumDistance(circle([0, 0], 2), circle([0, 0], 5));
+    expect(result.distance).toBeCloseTo(3, 9);
+    consistent(result);
+  });
+
+  it('returns zero for externally tangent circles', () => {
+    const result = minimumDistance(circle([0, 0], 5), circle([10, 0], 5));
+    expect(result.distance).toBe(0);
+    expect(result.pointA[0]).toBeCloseTo(5, 9);
+  });
+
+  it('measures concentric arcs whose sweeps overlap', () => {
+    const result = minimumDistance(arc([0, 0], 2, 0, 90), arc([0, 0], 5, 45, 180));
+    expect(result.distance).toBeCloseTo(3, 9);
+    consistent(result);
+  });
+
+  it('uses arc endpoints when concentric sweeps do not overlap', () => {
+    const result = minimumDistance(arc([0, 0], 5, 0, 90), arc([0, 0], 5, 180, 270));
+    expect(result.distance).toBeCloseTo(5 * Math.SQRT2, 9);
+    consistent(result);
+  });
+
+  it('measures an arc against a polyline', () => {
+    const result = minimumDistance(
+      polyline([[0, 0], [10, 0], [10, 10]]),
+      arc([10, 20], 5, 180, 360),
+    );
+    expect(result.distance).toBeCloseTo(5, 9);
+    consistent(result);
+  });
+});

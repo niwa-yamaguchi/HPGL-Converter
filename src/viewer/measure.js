@@ -169,11 +169,157 @@ function segmentSegment(first, second) {
   return best;
 }
 
+function segmentArc(segment, arc) {
+  const dx = segment.b[0] - segment.a[0];
+  const dy = segment.b[1] - segment.a[1];
+  const quadraticA = dx * dx + dy * dy;
+  if (quadraticA > EPSILON) {
+    const offsetX = segment.a[0] - arc.center[0];
+    const offsetY = segment.a[1] - arc.center[1];
+    const quadraticB = 2 * (dx * offsetX + dy * offsetY);
+    const quadraticC = offsetX * offsetX + offsetY * offsetY - arc.radius * arc.radius;
+    const discriminant = quadraticB * quadraticB - 4 * quadraticA * quadraticC;
+    if (discriminant >= 0) {
+      const root = Math.sqrt(discriminant);
+      const crossings = [
+        (-quadraticB - root) / (2 * quadraticA),
+        (-quadraticB + root) / (2 * quadraticA),
+      ].filter(t => t >= 0 && t <= 1);
+      for (const t of crossings) {
+        const point = [segment.a[0] + dx * t, segment.a[1] + dy * t];
+        if (angleInSweep(directionAngle(arc.center, point), arc.startAngle, arc.endAngle)) {
+          return { distance: 0, pointA: point, pointB: [...point] };
+        }
+      }
+    }
+  }
+
+  let best = null;
+  [segment.a, segment.b].forEach(point => {
+    const found = pointArc(point, arc);
+    best = better(best, { distance: found.distance, pointA: [...point], pointB: found.point });
+  });
+  [arc.startAngle, arc.endAngle].forEach(degrees => {
+    const point = arcPointAt(arc, degrees);
+    const found = pointSegment(point, segment);
+    best = better(best, { distance: found.distance, pointA: found.point, pointB: point });
+  });
+
+  const radial = pointSegment(arc.center, segment).point;
+  const radialDistance = distanceBetween(radial, arc.center);
+  if (radialDistance > EPSILON
+    && angleInSweep(directionAngle(arc.center, radial), arc.startAngle, arc.endAngle)) {
+    const ratio = arc.radius / radialDistance;
+    const onArc = [
+      arc.center[0] + (radial[0] - arc.center[0]) * ratio,
+      arc.center[1] + (radial[1] - arc.center[1]) * ratio,
+    ];
+    best = better(best, {
+      distance: Math.abs(radialDistance - arc.radius),
+      pointA: radial,
+      pointB: onArc,
+    });
+  }
+  return best;
+}
+
+function overlappingAngle(first, second) {
+  const candidates = [first.startAngle, first.endAngle, second.startAngle, second.endAngle];
+  for (const candidate of candidates) {
+    const normalized = normalizedDegrees(candidate);
+    if (angleInSweep(normalized, first.startAngle, first.endAngle)
+      && angleInSweep(normalized, second.startAngle, second.endAngle)) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function arcArc(first, second) {
+  const centreDistance = distanceBetween(first.center, second.center);
+  const unitX = centreDistance > EPSILON
+    ? (second.center[0] - first.center[0]) / centreDistance
+    : 0;
+  const unitY = centreDistance > EPSILON
+    ? (second.center[1] - first.center[1]) / centreDistance
+    : 0;
+  if (centreDistance > EPSILON) {
+    const along = (centreDistance * centreDistance
+      + first.radius * first.radius - second.radius * second.radius) / (2 * centreDistance);
+    const heightSquared = first.radius * first.radius - along * along;
+    if (heightSquared >= 0) {
+      const height = Math.sqrt(heightSquared);
+      const baseX = first.center[0] + along * unitX;
+      const baseY = first.center[1] + along * unitY;
+      for (const sign of [1, -1]) {
+        const point = [baseX - sign * height * unitY, baseY + sign * height * unitX];
+        if (angleInSweep(directionAngle(first.center, point), first.startAngle, first.endAngle)
+          && angleInSweep(
+            directionAngle(second.center, point), second.startAngle, second.endAngle,
+          )) {
+          return { distance: 0, pointA: point, pointB: [...point] };
+        }
+      }
+    }
+  }
+
+  let best = null;
+  [first.startAngle, first.endAngle].forEach(degrees => {
+    const point = arcPointAt(first, degrees);
+    const found = pointArc(point, second);
+    best = better(best, { distance: found.distance, pointA: point, pointB: found.point });
+  });
+  [second.startAngle, second.endAngle].forEach(degrees => {
+    const point = arcPointAt(second, degrees);
+    const found = pointArc(point, first);
+    best = better(best, { distance: found.distance, pointA: found.point, pointB: point });
+  });
+
+  if (centreDistance > EPSILON) {
+    for (const signA of [1, -1]) {
+      for (const signB of [1, -1]) {
+        const pointA = [
+          first.center[0] + signA * first.radius * unitX,
+          first.center[1] + signA * first.radius * unitY,
+        ];
+        const pointB = [
+          second.center[0] + signB * second.radius * unitX,
+          second.center[1] + signB * second.radius * unitY,
+        ];
+        if (angleInSweep(directionAngle(first.center, pointA), first.startAngle, first.endAngle)
+          && angleInSweep(
+            directionAngle(second.center, pointB), second.startAngle, second.endAngle,
+          )) {
+          best = better(best, { distance: distanceBetween(pointA, pointB), pointA, pointB });
+        }
+      }
+    }
+    return best;
+  }
+
+  const shared = overlappingAngle(first, second);
+  if (shared !== null) {
+    best = better(best, {
+      distance: Math.abs(first.radius - second.radius),
+      pointA: arcPointAt(first, shared),
+      pointB: arcPointAt(second, shared),
+    });
+  }
+  return best;
+}
+
 const elementDistance = (first, second) => {
   if (first.kind === 'segment' && second.kind === 'segment') {
     return segmentSegment(first, second);
   }
-  throw new TypeError('Unsupported element combination');
+  if (first.kind === 'segment') {
+    return segmentArc(first, second);
+  }
+  if (second.kind === 'segment') {
+    const flipped = segmentArc(second, first);
+    return { distance: flipped.distance, pointA: flipped.pointB, pointB: flipped.pointA };
+  }
+  return arcArc(first, second);
 };
 
 export function minimumDistance(a, b) {
