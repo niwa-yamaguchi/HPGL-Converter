@@ -15,6 +15,8 @@ const fakeCanvas = (width, height) => {
     translate: vi.fn(),
     rotate: vi.fn(),
     fillText: vi.fn(),
+    setLineDash: vi.fn(),
+    fill: vi.fn(),
   };
   const canvas = {
     width: 0,
@@ -85,5 +87,50 @@ describe('canvas renderer', () => {
     expect(context.beginPath).not.toHaveBeenCalled();
     expect(context.stroke).not.toHaveBeenCalled();
     expect(context.fillText).not.toHaveBeenCalled();
+  });
+});
+
+describe('measurement overlay', () => {
+  const overlayGroups = [{
+    color: '#146fae',
+    geometries: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+  }];
+
+  it('draws highlights and a dashed segment with round markers', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: {
+        highlights: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+        segment: [[0, 0], [0, 4]],
+      },
+    });
+
+    expect(context.setLineDash).toHaveBeenCalledWith([6, 4]);
+    expect(context.setLineDash).toHaveBeenLastCalledWith([]);
+    expect(context.strokeStyle).toBe('#111827');
+    expect(context.arc).toHaveBeenNthCalledWith(1, 150, 170, 3.5, 0, Math.PI * 2);
+    expect(context.arc).toHaveBeenNthCalledWith(2, 150, 130, 3.5, 0, Math.PI * 2);
+    expect(context.fill).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws a single marker and no dashes when both points coincide', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: { highlights: [], segment: [[2, 2], [2, 2]] },
+    });
+
+    expect(context.setLineDash).not.toHaveBeenCalledWith([6, 4]);
+    expect(context.fill).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves rendering unchanged when no overlay is given', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, { devicePixelRatio: 1, overlay: null });
+
+    expect(context.setLineDash).not.toHaveBeenCalled();
+    expect(context.fill).not.toHaveBeenCalled();
+    expect(context.lineWidth).toBe(1.25);
   });
 });

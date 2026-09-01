@@ -44,6 +44,43 @@ const renderGeometry = (context, geometry, viewport, screenPoint) => {
   }
 };
 
+const HIGHLIGHT_COLOR = '#111827';
+const MARKER_RADIUS = 3.5;
+
+const renderOverlay = (context, overlay, viewport, screenPoint) => {
+  if (!overlay) {
+    return;
+  }
+  context.globalAlpha = 1;
+  context.strokeStyle = HIGHLIGHT_COLOR;
+  context.fillStyle = HIGHLIGHT_COLOR;
+  context.lineWidth = 3.5;
+  (overlay.highlights ?? []).forEach(
+    geometry => renderGeometry(context, geometry, viewport, screenPoint),
+  );
+
+  if (!overlay.segment) {
+    return;
+  }
+  const from = screenPoint(overlay.segment[0]);
+  const to = screenPoint(overlay.segment[1]);
+  const coincident = Math.hypot(to[0] - from[0], to[1] - from[1]) < 0.5;
+  if (!coincident) {
+    context.lineWidth = 1.5;
+    context.setLineDash([6, 4]);
+    context.beginPath();
+    context.moveTo(...from);
+    context.lineTo(...to);
+    context.stroke();
+    context.setLineDash([]);
+  }
+  (coincident ? [from] : [from, to]).forEach(point => {
+    context.beginPath();
+    context.arc(point[0], point[1], MARKER_RADIUS, 0, Math.PI * 2);
+    context.fill();
+  });
+};
+
 export function renderViewer(canvas, groups, viewport, options = {}) {
   const ratio = options.devicePixelRatio ?? globalThis.devicePixelRatio ?? 1;
   const rect = canvas.getBoundingClientRect();
@@ -66,4 +103,5 @@ export function renderViewer(canvas, groups, viewport, options = {}) {
     context.lineWidth = 1.25;
     group.geometries.forEach(geometry => renderGeometry(context, geometry, viewport, screenPoint));
   });
+  renderOverlay(context, options.overlay ?? null, viewport, screenPoint);
 }
