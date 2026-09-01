@@ -16,6 +16,7 @@ import {
 } from './viewer/geometry.js';
 import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-client.js';
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
+import { minimumDistance, pickGeometry } from './viewer/measure.js';
 
 const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99';
 const MEASURE_HINT = '図形をクリックすると2つの図形の最小距離を表示します。';
@@ -24,6 +25,14 @@ const VIEWER_COLORS = [
   '#2f80ed', '#e67e22', '#27ae60', '#9b51e0',
   '#eb5757', '#00a6a6', '#f2c94c', '#f299c2',
 ];
+const CLICK_MOVE_LIMIT = 4;
+const PICK_RADIUS = 8;
+const GEOMETRY_LABELS = {
+  line: '線分',
+  polyline: '連続線',
+  circle: '円',
+  arc: '円弧',
+};
 
 function formatFileSize(bytes) {
   if (bytes < 1024) {
@@ -303,6 +312,32 @@ export function mountApp(root, deps = {}) {
       }));
   }
 
+  function measureCandidates() {
+    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
+      const comparison = currentDiffComparison();
+      if (!comparison) {
+        return [];
+      }
+      const { a, b, difference } = comparison;
+      return [
+        { geometries: difference.onlyA, source: `Aのみ（${a.name}）` },
+        { geometries: difference.common, source: `共通（${a.name} と ${b.name}）` },
+        { geometries: difference.onlyB, source: `Bのみ（${b.name}）` },
+      ].flatMap(({ geometries, source }) => geometries
+        .filter(geometry => geometry.type !== 'text')
+        .map(geometry => ({ geometry, label: `${source}の${GEOMETRY_LABELS[geometry.type]}` })));
+    }
+    return state.previewFiles
+      .flatMap((file, index) => (state.visiblePreviewFiles.has(index)
+        ? file.geometries
+          .filter(geometry => geometry.type !== 'text')
+          .map(geometry => ({
+            geometry,
+            label: `${file.name} の${GEOMETRY_LABELS[geometry.type]}`,
+          }))
+        : []));
+  }
+
   function measureOverlay() {
     if (state.selection.length === 0) {
       return null;
@@ -316,7 +351,67 @@ export function mountApp(root, deps = {}) {
   }
 
   function renderMeasure() {
-    nodes.viewerMeasure.textContent = MEASURE_HINT;
+    if (state.selection.length === 0) {
+      nodes.viewerMeasure.textContent = MEASURE_HINT;
+      return;
+    }
+    if (state.selection.length === 1) {
+      nodes.viewerMeasure.textContent
+        = `1つ目を選択しました（${state.selection[0].label}）。もう1つクリックしてください。`;
+      return;
+    }
+    const [first, second] = state.selection;
+    const distance = state.measurement.distance.toFixed(3);
+    const contact = state.measurement.distance === 0 ? '（接触または交差）' : '';
+    nodes.viewerMeasure.textContent
+      = `最小距離 ${distance} mm${contact} ／ A: ${first.label} ／ B: ${second.label}`;
+  }
+
+  function clearSelection() {
+    if (state.selection.length === 0 && state.measurement === null) {
+      return;
+    }
+    state.selection = [];
+    state.measurement = null;
+    renderMeasure();
+    scheduleViewerRender();
+  }
+
+  function selectGeometry(candidate) {
+    if (state.selection.length === 1 && state.selection[0].geometry === candidate.geometry) {
+      clearSelection();
+      return;
+    }
+    if (state.selection.length === 1) {
+      state.selection = [state.selection[0], candidate];
+      state.measurement = minimumDistance(
+        state.selection[0].geometry,
+        state.selection[1].geometry,
+      );
+    } else {
+      state.selection = [candidate];
+      state.measurement = null;
+    }
+    renderMeasure();
+    scheduleViewerRender();
+  }
+
+  function handleViewerClick(clientX, clientY) {
+    const rect = nodes.viewerCanvas.getBoundingClientRect();
+    const worldPoint = [
+      state.viewport.centerX + (clientX - rect.left - rect.width / 2) / state.viewport.scale,
+      state.viewport.centerY - (clientY - rect.top - rect.height / 2) / state.viewport.scale,
+    ];
+    const picked = pickGeometry(
+      measureCandidates(),
+      worldPoint,
+      PICK_RADIUS / state.viewport.scale,
+    );
+    if (picked === null) {
+      clearSelection();
+      return;
+    }
+    selectGeometry(picked.candidate);
   }
 
   function scheduleViewerRender() {
@@ -1098,7 +1193,13 @@ export function mountApp(root, deps = {}) {
     if (event.button !== 0) {
       return;
     }
-    pointerDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    pointerDrag = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
     nodes.viewerCanvas.setPointerCapture?.(event.pointerId);
     nodes.viewerCanvas.classList.add('is-panning');
   });
@@ -1108,7 +1209,7 @@ export function mountApp(root, deps = {}) {
     }
     const dx = event.clientX - pointerDrag.x;
     const dy = event.clientY - pointerDrag.y;
-    pointerDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    pointerDrag = { ...pointerDrag, x: event.clientX, y: event.clientY };
     state.viewport = panViewport(state.viewport, dx, dy);
     scheduleViewerRender();
   });
@@ -1116,11 +1217,18 @@ export function mountApp(root, deps = {}) {
     if (!pointerDrag || event.pointerId !== pointerDrag.id) {
       return;
     }
+    const moved = Math.hypot(
+      event.clientX - pointerDrag.startX,
+      event.clientY - pointerDrag.startY,
+    );
     if (nodes.viewerCanvas.hasPointerCapture?.(event.pointerId)) {
       nodes.viewerCanvas.releasePointerCapture(event.pointerId);
     }
     pointerDrag = null;
     nodes.viewerCanvas.classList.remove('is-panning');
+    if (event.type === 'pointerup' && moved < CLICK_MOVE_LIMIT) {
+      handleViewerClick(event.clientX, event.clientY);
+    }
   };
   listen(nodes.viewerCanvas, 'pointerup', finishPointerDrag);
   listen(nodes.viewerCanvas, 'pointercancel', finishPointerDrag);

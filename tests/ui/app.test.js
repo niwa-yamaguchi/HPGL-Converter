@@ -146,6 +146,92 @@ describe('mountApp', () => {
     vi.unstubAllGlobals();
   });
 
+  function stubCanvasRect(width = 400, height = 240) {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      width, height, left: 0, top: 0, right: width, bottom: height, x: 0, y: 0, toJSON() {},
+    }));
+  }
+
+  function clickCanvas(canvas, clientX, clientY) {
+    canvas.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, button: 0, clientX, clientY,
+    }));
+    canvas.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true, button: 0, clientX, clientY,
+    }));
+  }
+
+  function twoLinePreview() {
+    return {
+      files: [
+        {
+          name: 'a.hpgl',
+          layerName: 'a',
+          geometries: [line([[-5, 0], [5, 0]])],
+          geometryCount: 1,
+          errorCount: 0,
+          warningCount: 0,
+          diagnostics: [],
+        },
+        {
+          name: 'b.hpgl',
+          layerName: 'b',
+          geometries: [line([[-5, 3], [5, 3]])],
+          geometryCount: 1,
+          errorCount: 0,
+          warningCount: 0,
+          diagnostics: [],
+        },
+      ],
+    };
+  }
+
+  async function mountWithTwoLines(extra = {}) {
+    stubCanvasRect();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({
+        promise: Promise.resolve(twoLinePreview()),
+        cancel: vi.fn(),
+      })),
+      ...extra,
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('a.hpgl'),
+      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
+    ]);
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-controls"]').textContent,
+    ).toContain('b.hpgl'));
+    return document.querySelector('[data-testid="viewer-canvas"]');
+  }
+
+  async function mountWithGeometries(geometries) {
+    stubCanvasRect();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({
+        promise: Promise.resolve({
+          files: [{
+            name: 'x.hpgl',
+            layerName: 'x',
+            geometries,
+            geometryCount: geometries.length,
+            errorCount: 0,
+            warningCount: 0,
+            diagnostics: [],
+          }],
+        }),
+        cancel: vi.fn(),
+      })),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('x.hpgl')]);
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-controls"]').textContent,
+    ).toContain('x.hpgl'));
+    return document.querySelector('[data-testid="viewer-canvas"]');
+  }
+
   it('shows the private local workflow with one native file-picker tab stop', () => {
     mount({ createConversionJob: vi.fn() });
 
@@ -989,5 +1075,115 @@ describe('mountApp', () => {
     expect(readme).toContain('自動ダウンロードを開始できなかった場合');
     expect(readme).toContain('再ダウンロード');
     expect(readme).toContain('自動変更されません');
+  });
+
+  it('measures the distance between two clicked geometries', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('1つ目を選択しました（a.hpgl の線分）。もう1つクリックしてください。');
+
+    clickCanvas(canvas, 200, 64);
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('最小距離 3.000 mm ／ A: a.hpgl の線分 ／ B: b.hpgl の線分');
+  });
+
+  it('does not select while dragging to pan', async () => {
+    const canvas = await mountWithTwoLines();
+
+    canvas.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, button: 0, clientX: 200, clientY: 176,
+    }));
+    canvas.dispatchEvent(new MouseEvent('pointermove', {
+      bubbles: true, clientX: 240, clientY: 176,
+    }));
+    canvas.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true, button: 0, clientX: 240, clientY: 176,
+    }));
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('deselects when the same geometry is clicked again', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 210, 176);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('restarts the selection on the third click', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 64);
+    clickCanvas(canvas, 200, 176);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('1つ目を選択しました（a.hpgl の線分）。もう1つクリックしてください。');
+  });
+
+  it('clears the selection when empty space is clicked', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 120);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('sends the selected geometries and the closest points to the renderer', async () => {
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 64);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    const { overlay } = renderViewer.mock.lastCall[3];
+    expect(overlay.highlights).toHaveLength(2);
+    expect(overlay.segment[0][1]).toBeCloseTo(0, 9);
+    expect(overlay.segment[1][1]).toBeCloseTo(3, 9);
+  });
+
+  it('ignores geometries of files that are hidden', async () => {
+    const canvas = await mountWithTwoLines();
+    const toggles = document.querySelectorAll('[data-testid="viewer-layer-toggle"]');
+    toggles[0].click();
+
+    clickCanvas(canvas, 200, 176);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('reports crossing geometries as a zero distance', async () => {
+    // Bounds -5..5 on both axes give scale 21.6 and a canvas centre of (200, 120).
+    const canvas = await mountWithGeometries([
+      line([[-5, -5], [5, 5]]),
+      line([[-5, 5], [5, -5]]),
+    ]);
+
+    clickCanvas(canvas, 243, 77);
+    clickCanvas(canvas, 157, 77);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('最小距離 0.000 mm（接触または交差） ／ A: x.hpgl の線分 ／ B: x.hpgl の線分');
+  });
+
+  it('never selects text geometry', async () => {
+    const canvas = await mountWithGeometries([
+      { type: 'text', point: [0, 0], text: 'A', height: 2, rotation: 0 },
+    ]);
+
+    clickCanvas(canvas, 200, 120);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
   });
 });
