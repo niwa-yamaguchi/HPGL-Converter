@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  combinedBounds, compareGeometrySets, fitViewport, geometryBounds, geometryKey,
+  angleInSweep, assertViewerGeometry, combinedBounds, compareGeometrySets, fitViewport, geometryBounds, geometryKey,
   panViewport, zoomViewport,
 } from '../../src/viewer/geometry.js';
 
@@ -69,5 +69,32 @@ describe('viewer geometry', () => {
     expect(() => zoomViewport(viewport, { x: 0, y: Number.NaN }, 1)).toThrow(RangeError);
     expect(() => zoomViewport({ ...viewport, scale: 0 }, { x: 0, y: 0 }, 1)).toThrow(RangeError);
     expect(() => panViewport(viewport, 1, Infinity)).toThrow(RangeError);
+  });
+});
+
+describe('angleInSweep', () => {
+  it('accepts angles inside a positive sweep and rejects the rest', () => {
+    expect(angleInSweep(45, 0, 90)).toBe(true);
+    expect(angleInSweep(0, 0, 90)).toBe(true);
+    expect(angleInSweep(90, 0, 90)).toBe(true);
+    expect(angleInSweep(180, 0, 90)).toBe(false);
+  });
+
+  it('accepts angles inside a negative sweep', () => {
+    expect(angleInSweep(350, 0, -90)).toBe(true);
+    expect(angleInSweep(180, 0, -90)).toBe(false);
+  });
+});
+
+describe('assertViewerGeometry', () => {
+  it('accepts every supported geometry type', () => {
+    expect(() => assertViewerGeometry({ type: 'line', points: [[0, 0], [1, 1]] })).not.toThrow();
+    expect(() => assertViewerGeometry({ type: 'circle', center: [0, 0], radius: 2 })).not.toThrow();
+  });
+
+  it('rejects unknown types and non-finite values', () => {
+    expect(() => assertViewerGeometry({ type: 'spline' })).toThrow(TypeError);
+    expect(() => assertViewerGeometry({ type: 'circle', center: [0, 0], radius: Number.NaN }))
+      .toThrow(RangeError);
   });
 });
