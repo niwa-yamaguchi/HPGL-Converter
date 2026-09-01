@@ -20,6 +20,7 @@ import { minimumDistance, pickGeometry } from './viewer/measure.js';
 
 const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99';
 const MEASURE_HINT = '図形をクリックすると2つの図形の最小距離を表示します。';
+const MEASURE_FAILURE = '距離を計算できませんでした。';
 const MAX_VISIBLE_DIAGNOSTICS = 100;
 const VIEWER_COLORS = [
   '#2f80ed', '#e67e22', '#27ae60', '#9b51e0',
@@ -377,17 +378,29 @@ export function mountApp(root, deps = {}) {
     scheduleViewerRender();
   }
 
+  function failMeasure() {
+    state.selection = [];
+    state.measurement = null;
+    nodes.viewerMeasure.textContent = MEASURE_FAILURE;
+    scheduleViewerRender();
+  }
+
   function selectGeometry(candidate) {
     if (state.selection.length === 1 && state.selection[0].geometry === candidate.geometry) {
       clearSelection();
       return;
     }
     if (state.selection.length === 1) {
-      state.selection = [state.selection[0], candidate];
-      state.measurement = minimumDistance(
-        state.selection[0].geometry,
-        state.selection[1].geometry,
-      );
+      const pair = [state.selection[0], candidate];
+      let measurement;
+      try {
+        measurement = minimumDistance(pair[0].geometry, pair[1].geometry);
+      } catch {
+        failMeasure();
+        return;
+      }
+      state.selection = pair;
+      state.measurement = measurement;
     } else {
       state.selection = [candidate];
       state.measurement = null;
@@ -402,11 +415,17 @@ export function mountApp(root, deps = {}) {
       state.viewport.centerX + (clientX - rect.left - rect.width / 2) / state.viewport.scale,
       state.viewport.centerY - (clientY - rect.top - rect.height / 2) / state.viewport.scale,
     ];
-    const picked = pickGeometry(
-      measureCandidates(),
-      worldPoint,
-      PICK_RADIUS / state.viewport.scale,
-    );
+    let picked;
+    try {
+      picked = pickGeometry(
+        measureCandidates(),
+        worldPoint,
+        PICK_RADIUS / state.viewport.scale,
+      );
+    } catch {
+      failMeasure();
+      return;
+    }
     if (picked === null) {
       clearSelection();
       return;
@@ -492,12 +511,14 @@ export function mountApp(root, deps = {}) {
       aSelect.addEventListener('change', () => {
         state.compareA = Number(aSelect.value);
         ensureDifferentComparisons('a');
+        clearSelection();
         renderPreviewControls();
         fitPreview();
       });
       bSelect.addEventListener('change', () => {
         state.compareB = Number(bSelect.value);
         ensureDifferentComparisons('b');
+        clearSelection();
         renderPreviewControls();
         fitPreview();
       });
@@ -522,6 +543,7 @@ export function mountApp(root, deps = {}) {
         } else {
           state.visiblePreviewFiles.delete(index);
         }
+        clearSelection();
         fitPreview();
       });
       legend.append(label);
@@ -540,6 +562,7 @@ export function mountApp(root, deps = {}) {
       return;
     }
     state.previewJob = null;
+    clearSelection();
     state.previewFiles = Array.isArray(previewResult?.files) ? previewResult.files : [];
     state.visiblePreviewFiles = new Set(state.previewFiles.map((_file, index) => index));
     state.compareA = 0;
@@ -559,6 +582,7 @@ export function mountApp(root, deps = {}) {
       return;
     }
     state.previewJob = null;
+    clearSelection();
     state.previewFiles = [];
     state.visiblePreviewFiles.clear();
     state.diffComparisonCache = null;
@@ -577,6 +601,7 @@ export function mountApp(root, deps = {}) {
 
   function startPreview() {
     state.previewToken = null;
+    clearSelection();
     if (state.previewJob) {
       try {
         state.previewJob.cancel();
@@ -1164,6 +1189,7 @@ export function mountApp(root, deps = {}) {
       return;
     }
     state.viewerMode = 'normal';
+    clearSelection();
     renderPreviewControls();
     fitPreview();
   });
@@ -1172,6 +1198,7 @@ export function mountApp(root, deps = {}) {
       return;
     }
     state.viewerMode = 'diff';
+    clearSelection();
     ensureDifferentComparisons();
     renderPreviewControls();
     fitPreview();
@@ -1186,6 +1213,11 @@ export function mountApp(root, deps = {}) {
       event.deltaY,
     );
     scheduleViewerRender();
+  });
+  listen(nodes.viewerCanvas, 'keydown', event => {
+    if (event.key === 'Escape') {
+      clearSelection();
+    }
   });
 
   let pointerDrag = null;

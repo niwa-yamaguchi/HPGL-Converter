@@ -1186,4 +1186,84 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
       .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
   });
+
+  it('clears the selection on Escape', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    canvas.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('clears the selection when the layer visibility changes', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    document.querySelectorAll('[data-testid="viewer-layer-toggle"]')[1].click();
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('clears the selection when the viewer mode changes', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('clears the selection when a new preview starts', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('c.hpgl', 'PU;', { lastModified: 999 }),
+    ]);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('recovers when the distance computation throws', async () => {
+    stubCanvasRect();
+    const geometries = [
+      { type: 'line', points: [[-5, 0], [5, 0]] },
+      { type: 'line', points: [[-5, 3], [5, 3]] },
+    ];
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({
+        promise: Promise.resolve({
+          files: [{
+            name: 'a.hpgl',
+            layerName: 'a',
+            geometries,
+            geometryCount: 2,
+            errorCount: 0,
+            warningCount: 0,
+            diagnostics: [],
+          }],
+        }),
+        cancel: vi.fn(),
+      })),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('a.hpgl')]);
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-controls"]').textContent,
+    ).toContain('a.hpgl'));
+    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
+
+    clickCanvas(canvas, 200, 176);
+    geometries[1].points = [[Number.NaN, 0], [1, 1]];
+    clickCanvas(canvas, 200, 64);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('距離を計算できませんでした。');
+    expect(document.querySelector('[data-testid="viewer-status"]').dataset.kind).toBe('ready');
+  });
 });
