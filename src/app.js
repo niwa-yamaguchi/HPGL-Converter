@@ -247,6 +247,7 @@ export function mountApp(root, deps = {}) {
     destroyed: false,
     selection: [],
     measurement: null,
+    measureFailed: false,
   };
   const listeners = [];
   let viewerResizeObserver = null;
@@ -313,6 +314,10 @@ export function mountApp(root, deps = {}) {
       }));
   }
 
+  function isMeasurable(geometry) {
+    return Object.hasOwn(GEOMETRY_LABELS, geometry.type);
+  }
+
   function measureCandidates() {
     if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
       const comparison = currentDiffComparison();
@@ -325,13 +330,13 @@ export function mountApp(root, deps = {}) {
         { geometries: difference.common, source: `共通（${a.name} と ${b.name}）` },
         { geometries: difference.onlyB, source: `Bのみ（${b.name}）` },
       ].flatMap(({ geometries, source }) => geometries
-        .filter(geometry => geometry.type !== 'text')
+        .filter(isMeasurable)
         .map(geometry => ({ geometry, label: `${source}の${GEOMETRY_LABELS[geometry.type]}` })));
     }
     return state.previewFiles
       .flatMap((file, index) => (state.visiblePreviewFiles.has(index)
         ? file.geometries
-          .filter(geometry => geometry.type !== 'text')
+          .filter(isMeasurable)
           .map(geometry => ({
             geometry,
             label: `${file.name} の${GEOMETRY_LABELS[geometry.type]}`,
@@ -363,17 +368,21 @@ export function mountApp(root, deps = {}) {
     }
     const [first, second] = state.selection;
     const distance = state.measurement.distance.toFixed(3);
-    const contact = state.measurement.distance === 0 ? '（接触または交差）' : '';
-    nodes.viewerMeasure.textContent
-      = `最小距離 ${distance} mm${contact} ／ A: ${first.label} ／ B: ${second.label}`;
+    const contact = distance === '0.000' ? '（接触または交差）' : '';
+    nodes.viewerMeasure.replaceChildren(
+      document.createTextNode('最小距離 '),
+      element('b', '', `${distance} mm`),
+      document.createTextNode(`${contact} ／ A: ${first.label} ／ B: ${second.label}`),
+    );
   }
 
   function clearSelection() {
-    if (state.selection.length === 0 && state.measurement === null) {
+    if (state.selection.length === 0 && state.measurement === null && !state.measureFailed) {
       return;
     }
     state.selection = [];
     state.measurement = null;
+    state.measureFailed = false;
     renderMeasure();
     scheduleViewerRender();
   }
@@ -381,6 +390,7 @@ export function mountApp(root, deps = {}) {
   function failMeasure() {
     state.selection = [];
     state.measurement = null;
+    state.measureFailed = true;
     nodes.viewerMeasure.textContent = MEASURE_FAILURE;
     scheduleViewerRender();
   }

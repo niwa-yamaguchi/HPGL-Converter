@@ -322,13 +322,47 @@ const elementDistance = (first, second) => {
   return arcArc(first, second);
 };
 
+function elementBounds(el) {
+  if (el.kind === 'segment') {
+    return {
+      minX: Math.min(el.a[0], el.b[0]),
+      minY: Math.min(el.a[1], el.b[1]),
+      maxX: Math.max(el.a[0], el.b[0]),
+      maxY: Math.max(el.a[1], el.b[1]),
+    };
+  }
+  const angles = [el.startAngle, el.endAngle,
+    ...[0, 90, 180, 270].filter(value => angleInSweep(value, el.startAngle, el.endAngle))];
+  const points = angles.map(degrees => arcPointAt(el, degrees));
+  return {
+    minX: Math.min(...points.map(point => point[0])),
+    minY: Math.min(...points.map(point => point[1])),
+    maxX: Math.max(...points.map(point => point[0])),
+    maxY: Math.max(...points.map(point => point[1])),
+  };
+}
+
+// Lower bound on the distance between two axis-aligned boxes; used to skip the
+// expensive elementDistance call when it cannot possibly beat the current best.
+const boundsLowerBound = (first, second) => Math.hypot(
+  Math.max(0, first.minX - second.maxX, second.minX - first.maxX),
+  Math.max(0, first.minY - second.maxY, second.minY - first.maxY),
+);
+
 export function minimumDistance(a, b) {
   const elementsA = toElements(a);
   const elementsB = toElements(b);
+  const boundsA = elementsA.map(elementBounds);
+  const boundsB = elementsB.map(elementBounds);
   let best = null;
-  for (const first of elementsA) {
-    for (const second of elementsB) {
-      best = better(best, elementDistance(first, second));
+  for (let i = 0; i < elementsA.length; i += 1) {
+    const first = elementsA[i];
+    const firstBounds = boundsA[i];
+    for (let j = 0; j < elementsB.length; j += 1) {
+      if (best !== null && boundsLowerBound(firstBounds, boundsB[j]) >= best.distance) {
+        continue;
+      }
+      best = better(best, elementDistance(first, elementsB[j]));
       if (best.distance === 0) {
         return best;
       }

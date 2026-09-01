@@ -222,4 +222,33 @@ describe('minimumDistance with arcs and circles', () => {
     expect(result.distance).toBeCloseTo(5, 9);
     consistent(result);
   });
+
+  it('measures non-concentric arcs whose circles intersect outside both sweeps', () => {
+    // Circles centred at (0,0) and (8,0), both radius 5, intersect at (4, ±3).
+    // (4, 3) sits inside the first arc's sweep but outside the second's, and
+    // (4, -3) is outside the first arc's sweep entirely, so neither crossing
+    // counts and the true minimum comes from the second arc's endpoint (8, 5).
+    const first = arc([0, 0], 5, 0, 90);
+    const second = arc([8, 0], 5, 0, 90);
+    const result = minimumDistance(first, second);
+    expect(result.distance).toBeCloseTo(Math.sqrt(89) - 5, 9);
+    expect(result.pointB).toEqual([8, 5]);
+    expect(Math.hypot(result.pointA[0], result.pointA[1])).toBeCloseTo(5, 9);
+    consistent(result);
+  });
+});
+
+describe('minimumDistance performance', () => {
+  it('returns the correct distance for a large polyline pair', () => {
+    // A straight 400-vertex baseline and a 400-vertex polyline that dips down
+    // to touch it at a single vertex; everywhere else the two are ~100 apart,
+    // so an incorrect prune would surface as a much larger reported distance.
+    const baseline = Array.from({ length: 400 }, (_, index) => [index, 0]);
+    const notch = Array.from({ length: 400 }, (_, index) => [index, index === 200 ? 1 : 100]);
+    const result = minimumDistance(polyline(baseline), polyline(notch));
+    expect(result.distance).toBeCloseTo(1, 9);
+    expect(result.pointA).toEqual([200, 0]);
+    expect(result.pointB).toEqual([200, 1]);
+    consistent(result);
+  });
 });

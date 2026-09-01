@@ -1266,4 +1266,54 @@ describe('mountApp', () => {
       .toBe('距離を計算できませんでした。');
     expect(document.querySelector('[data-testid="viewer-status"]').dataset.kind).toBe('ready');
   });
+
+  it('labels a two-selection measurement with the diff classification in diff mode', async () => {
+    const canvas = await mountWithTwoLines();
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-diff-counts"]').textContent,
+    ).toBe('Aのみ 1 / 共通 0 / Bのみ 1'));
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 64);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('最小距離 3.000 mm ／ A: Aのみ（a.hpgl）の線分 ／ B: Bのみ（b.hpgl）の線分');
+  });
+
+  it('clears an active selection when a compare target select changes', async () => {
+    stubCanvasRect();
+    const files = [
+      hpglFile('a.hpgl'),
+      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
+      hpglFile('c.hpgl', 'PU;', { lastModified: 789 }),
+    ];
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(inputFiles => ({
+        promise: Promise.resolve(previewResult(inputFiles)),
+        cancel: vi.fn(),
+      })),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-mode-diff"]').disabled).toBe(false));
+
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+    const compareA = document.querySelector('[data-testid="viewer-compare-a"]');
+    expect(compareA).not.toBeNull();
+
+    // With compareA=0/compareB=1, the diff view's fitted bounds cover the two
+    // lines at [[0,0],[1,1]] and [[1,0],[2,1]]; (0.5, 0.5) is the midpoint of
+    // the first (onlyA) line.
+    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
+    clickCanvas(canvas, 106, 120);
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .not.toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+
+    compareA.value = '2';
+    compareA.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
 });
