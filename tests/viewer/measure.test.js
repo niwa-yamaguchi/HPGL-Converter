@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pointToGeometryDistance } from '../../src/viewer/measure.js';
+import { pointToGeometryDistance, pickGeometry } from '../../src/viewer/measure.js';
 
 const line = points => ({ type: 'line', points });
 const polyline = points => ({ type: 'polyline', points });
@@ -50,5 +50,46 @@ describe('pointToGeometryDistance', () => {
     expect(() => pointToGeometryDistance([Number.NaN, 0], line([[0, 0], [1, 1]])))
       .toThrow(RangeError);
     expect(() => pointToGeometryDistance([0, 0], { type: 'spline' })).toThrow(TypeError);
+  });
+});
+
+describe('pickGeometry', () => {
+  const candidates = [
+    { geometry: line([[0, 0], [10, 0]]), label: 'a' },
+    { geometry: line([[0, 4], [10, 4]]), label: 'b' },
+    { geometry: { type: 'text', point: [5, 1], text: 'A', height: 1, rotation: 0 }, label: 't' },
+  ];
+
+  it('returns the nearest candidate inside the tolerance', () => {
+    const picked = pickGeometry(candidates, [5, 3], 2);
+    expect(picked.index).toBe(1);
+    expect(picked.candidate.label).toBe('b');
+    expect(picked.distance).toBeCloseTo(1, 9);
+  });
+
+  it('returns null when nothing is inside the tolerance', () => {
+    expect(pickGeometry(candidates, [5, 2], 0.5)).toBe(null);
+  });
+
+  it('never picks text candidates', () => {
+    expect(pickGeometry([candidates[2]], [5, 1], 10)).toBe(null);
+  });
+
+  it('prefers the earlier candidate when distances tie', () => {
+    const tied = [
+      { geometry: line([[0, 0], [10, 0]]), label: 'first' },
+      { geometry: line([[0, 0], [10, 0]]), label: 'second' },
+    ];
+    expect(pickGeometry(tied, [5, 1], 2).candidate.label).toBe('first');
+  });
+
+  it('returns null for an empty candidate list', () => {
+    expect(pickGeometry([], [0, 0], 5)).toBe(null);
+  });
+
+  it('rejects invalid arguments', () => {
+    expect(() => pickGeometry(null, [0, 0], 1)).toThrow(TypeError);
+    expect(() => pickGeometry(candidates, [0, 0], -1)).toThrow(RangeError);
+    expect(() => pickGeometry([{}], [0, 0], 1)).toThrow(TypeError);
   });
 });

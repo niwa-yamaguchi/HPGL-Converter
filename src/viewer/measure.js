@@ -108,3 +108,28 @@ export function pointToGeometryDistance(point, geometry) {
   return toElements(geometry)
     .reduce((best, element) => Math.min(best, pointToElement(point, element).distance), Infinity);
 }
+
+export function pickGeometry(candidates, worldPoint, tolerance) {
+  if (!Array.isArray(candidates)) {
+    throw new TypeError('candidates must be an array');
+  }
+  assertPoint(worldPoint, 'worldPoint');
+  if (typeof tolerance !== 'number') {
+    throw new TypeError('tolerance must be a number');
+  }
+  if (!Number.isFinite(tolerance) || tolerance < 0) {
+    throw new RangeError('tolerance must be a finite non-negative number');
+  }
+
+  let best = null;
+  candidates.forEach((candidate, index) => {
+    if (candidate === null || typeof candidate !== 'object') {
+      throw new TypeError(`candidates[${index}] must be an object`);
+    }
+    const distance = pointToGeometryDistance(worldPoint, candidate.geometry);
+    if (distance <= tolerance && (best === null || distance < best.distance)) {
+      best = { index, candidate, distance };
+    }
+  });
+  return best;
+}
