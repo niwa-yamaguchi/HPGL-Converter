@@ -40,7 +40,7 @@ const assertPoints = (points, label) => {
   points.forEach((point, index) => assertPoint(point, `${label}[${index}]`));
 };
 
-const assertGeometry = geometry => {
+export const assertViewerGeometry = geometry => {
   assertObject(geometry, 'geometry');
   if (typeof geometry.type !== 'string') {
     throw new TypeError('geometry.type must be a string');
@@ -108,7 +108,7 @@ const angle = value => {
 };
 
 export function geometryKey(geometry) {
-  assertGeometry(geometry);
+  assertViewerGeometry(geometry);
   switch (geometry.type) {
     case 'line': {
       const points = geometry.points.map(pointKey).sort();
@@ -161,7 +161,7 @@ const pointAt = (center, radius, degrees) => {
   const radians = degrees * Math.PI / 180;
   return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
 };
-const inSweep = (candidate, start, end) => {
+export const angleInSweep = (candidate, start, end) => {
   const sweep = end - start;
   return sweep > 0
     ? positiveMod(candidate - start) <= sweep + 1e-9
@@ -175,7 +175,7 @@ const boundsOfPoints = points => ({
 });
 
 export function geometryBounds(geometry) {
-  assertGeometry(geometry);
+  assertViewerGeometry(geometry);
   if (geometry.type === 'line' || geometry.type === 'polyline') {
     return boundsOfPoints(geometry.points);
   }
@@ -189,7 +189,7 @@ export function geometryBounds(geometry) {
   }
   if (geometry.type === 'arc') {
     const angles = [geometry.startAngle, geometry.endAngle,
-      ...[0, 90, 180, 270].filter(value => inSweep(value, geometry.startAngle, geometry.endAngle))];
+      ...[0, 90, 180, 270].filter(value => angleInSweep(value, geometry.startAngle, geometry.endAngle))];
     return boundsOfPoints(angles.map(value => pointAt(geometry.center, geometry.radius, value)));
   }
   if (geometry.type === 'text') {

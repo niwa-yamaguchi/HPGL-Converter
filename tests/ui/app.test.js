@@ -146,6 +146,93 @@ describe('mountApp', () => {
     vi.unstubAllGlobals();
   });
 
+  function stubCanvasRect(width = 400, height = 240) {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      width, height, left: 0, top: 0, right: width, bottom: height, x: 0, y: 0, toJSON() {},
+    }));
+  }
+
+  function clickCanvas(canvas, clientX, clientY) {
+    canvas.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, button: 0, clientX, clientY,
+    }));
+    canvas.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true, button: 0, clientX, clientY,
+    }));
+  }
+
+  function twoLinePreview() {
+    return {
+      files: [
+        {
+          name: 'a.hpgl',
+          layerName: 'a',
+          geometries: [line([[-5, 0], [5, 0]])],
+          geometryCount: 1,
+          errorCount: 0,
+          warningCount: 0,
+          diagnostics: [],
+        },
+        {
+          name: 'b.hpgl',
+          layerName: 'b',
+          geometries: [line([[-5, 3], [5, 3]])],
+          geometryCount: 1,
+          errorCount: 0,
+          warningCount: 0,
+          diagnostics: [],
+        },
+      ],
+    };
+  }
+
+  async function mountWithTwoLines(extra = {}) {
+    stubCanvasRect();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({
+        promise: Promise.resolve(twoLinePreview()),
+        cancel: vi.fn(),
+      })),
+      ...extra,
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('a.hpgl'),
+      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
+    ]);
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-controls"]').textContent,
+    ).toContain('b.hpgl'));
+    return document.querySelector('[data-testid="viewer-canvas"]');
+  }
+
+  async function mountWithGeometries(geometries, extra = {}) {
+    stubCanvasRect();
+    mount({
+      ...extra,
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({
+        promise: Promise.resolve({
+          files: [{
+            name: 'x.hpgl',
+            layerName: 'x',
+            geometries,
+            geometryCount: geometries.length,
+            errorCount: 0,
+            warningCount: 0,
+            diagnostics: [],
+          }],
+        }),
+        cancel: vi.fn(),
+      })),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('x.hpgl')]);
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-controls"]').textContent,
+    ).toContain('x.hpgl'));
+    return document.querySelector('[data-testid="viewer-canvas"]');
+  }
+
   it('shows the private local workflow with one native file-picker tab stop', () => {
     mount({ createConversionJob: vi.fn() });
 
@@ -602,7 +689,33 @@ describe('mountApp', () => {
       document.querySelector('[data-testid="viewer-canvas"]'),
       [],
       expect.any(Object),
+      expect.any(Object),
     ));
+  });
+
+  it('shows the measurement hint before anything is selected', () => {
+    mount({ createConversionJob: vi.fn() });
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+    expect(document.querySelector('[data-testid="viewer-canvas"]').getAttribute('tabindex'))
+      .toBe('0');
+  });
+
+  it('passes an overlay slot to the renderer', async () => {
+    const renderViewer = vi.fn();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(files => ({
+        promise: Promise.resolve(previewResult(files)),
+        cancel: vi.fn(),
+      })),
+      renderViewer,
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('a.hpgl')]);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[1]).toHaveLength(1));
+    expect(renderViewer.mock.lastCall[3]).toEqual({ overlay: null });
   });
 
   it('clears stale preview counts before reparsing and after a preview failure', async () => {
@@ -963,5 +1076,358 @@ describe('mountApp', () => {
     expect(readme).toContain('自動ダウンロードを開始できなかった場合');
     expect(readme).toContain('再ダウンロード');
     expect(readme).toContain('自動変更されません');
+  });
+
+  it('measures the distance between two clicked geometries', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('1つ目を選択しました（a.hpgl の線分）。もう1つクリックしてください。');
+
+    clickCanvas(canvas, 200, 64);
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('最小距離 3.000 mm ／ A: a.hpgl の線分 ／ B: b.hpgl の線分');
+  });
+
+  it('does not select while dragging to pan', async () => {
+    const canvas = await mountWithTwoLines();
+
+    canvas.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, button: 0, clientX: 200, clientY: 176,
+    }));
+    canvas.dispatchEvent(new MouseEvent('pointermove', {
+      bubbles: true, clientX: 240, clientY: 176,
+    }));
+    canvas.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true, button: 0, clientX: 240, clientY: 176,
+    }));
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('deselects when the same geometry is clicked again', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 210, 176);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('restarts the selection on the third click', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 64);
+    clickCanvas(canvas, 200, 176);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('1つ目を選択しました（a.hpgl の線分）。もう1つクリックしてください。');
+  });
+
+  it('clears the selection when empty space is clicked', async () => {
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 120);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('sends the selected geometries and the closest points to the renderer', async () => {
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 64);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    const { overlay } = renderViewer.mock.lastCall[3];
+    expect(overlay.highlights).toHaveLength(2);
+    expect(overlay.segment[0][1]).toBeCloseTo(0, 9);
+    expect(overlay.segment[1][1]).toBeCloseTo(3, 9);
+  });
+
+  it('ignores geometries of files that are hidden', async () => {
+    const canvas = await mountWithTwoLines();
+    const toggles = document.querySelectorAll('[data-testid="viewer-layer-toggle"]');
+    toggles[0].click();
+
+    clickCanvas(canvas, 200, 176);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('reports crossing geometries as a zero distance', async () => {
+    // Bounds -5..5 on both axes give scale 21.6 and a canvas centre of (200, 120).
+    const canvas = await mountWithGeometries([
+      line([[-5, -5], [5, 5]]),
+      line([[-5, 5], [5, -5]]),
+    ]);
+
+    clickCanvas(canvas, 243, 77);
+    clickCanvas(canvas, 157, 77);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('最小距離 0.000 mm（接触または交差） ／ A: x.hpgl の線分 ／ B: x.hpgl の線分');
+  });
+
+  it('never selects text geometry', async () => {
+    const canvas = await mountWithGeometries([
+      { type: 'text', point: [0, 0], text: 'A', height: 2, rotation: 0 },
+    ]);
+
+    clickCanvas(canvas, 200, 120);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('hands the distance label to the renderer', async () => {
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    expect(renderViewer.mock.lastCall[3].overlay.label).toBe(null);
+
+    clickCanvas(canvas, 200, 64);
+
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.label).toBe('最小距離 3.000 mm'),
+    );
+  });
+
+  it('marks contact in the canvas label as well as the status row', async () => {
+    const renderViewer = vi.fn();
+    const canvas = await mountWithGeometries([
+      line([[-5, -5], [5, 5]]),
+      line([[-5, 5], [5, -5]]),
+    ], { renderViewer });
+
+    clickCanvas(canvas, 243, 77);
+    clickCanvas(canvas, 157, 77);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay.label)
+      .toBe('最小距離 0.000 mm（接触または交差）'));
+  });
+
+  function stubBlinkTimers() {
+    const ticks = [];
+    const cleared = [];
+    vi.stubGlobal('setInterval', vi.fn((callback, delay) => {
+      ticks.push({ callback, delay });
+      return ticks.length;
+    }));
+    vi.stubGlobal('clearInterval', vi.fn(id => cleared.push(id)));
+    return { ticks, cleared };
+  }
+
+  it('blinks the selection highlight while something is selected', async () => {
+    const timers = stubBlinkTimers();
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true);
+    expect(timers.ticks).toHaveLength(1);
+
+    timers.ticks[0].callback();
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(false),
+    );
+
+    timers.ticks[0].callback();
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true),
+    );
+  });
+
+  it('stops blinking when the selection is cleared', async () => {
+    const timers = stubBlinkTimers();
+    const canvas = await mountWithTwoLines();
+
+    clickCanvas(canvas, 200, 176);
+    expect(timers.ticks).toHaveLength(1);
+
+    canvas.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
+
+    expect(timers.cleared).toEqual([1]);
+  });
+
+  it('reuses one blink timer and shows each new selection bright', async () => {
+    const timers = stubBlinkTimers();
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    timers.ticks[0].callback();
+    clickCanvas(canvas, 200, 64);
+
+    expect(timers.ticks).toHaveLength(1);
+    expect(timers.cleared).toEqual([]);
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true),
+    );
+  });
+
+  it('stops blinking when the app is destroyed', async () => {
+    const timers = stubBlinkTimers();
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    mounted.destroy();
+    mounted = undefined;
+
+    expect(timers.cleared).toEqual([1]);
+  });
+
+  it('keeps the highlight steady when reduced motion is preferred', async () => {
+    const timers = stubBlinkTimers();
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    expect(renderViewer.mock.lastCall[3].overlay.highlightOn).toBe(true);
+    expect(timers.ticks).toEqual([]);
+  });
+
+  it('clears the selection on Escape', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    canvas.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('clears the selection when the layer visibility changes', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    document.querySelectorAll('[data-testid="viewer-layer-toggle"]')[1].click();
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('clears the selection when the viewer mode changes', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('clears the selection when a new preview starts', async () => {
+    const canvas = await mountWithTwoLines();
+    clickCanvas(canvas, 200, 176);
+
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('c.hpgl', 'PU;', { lastModified: 999 }),
+    ]);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('recovers when the distance computation throws', async () => {
+    stubCanvasRect();
+    const geometries = [
+      { type: 'line', points: [[-5, 0], [5, 0]] },
+      { type: 'line', points: [[-5, 3], [5, 3]] },
+    ];
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(() => ({
+        promise: Promise.resolve({
+          files: [{
+            name: 'a.hpgl',
+            layerName: 'a',
+            geometries,
+            geometryCount: 2,
+            errorCount: 0,
+            warningCount: 0,
+            diagnostics: [],
+          }],
+        }),
+        cancel: vi.fn(),
+      })),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('a.hpgl')]);
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-controls"]').textContent,
+    ).toContain('a.hpgl'));
+    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
+
+    clickCanvas(canvas, 200, 176);
+    geometries[1].points = [[Number.NaN, 0], [1, 1]];
+    clickCanvas(canvas, 200, 64);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('距離を計算できませんでした。');
+    expect(document.querySelector('[data-testid="viewer-status"]').dataset.kind).toBe('ready');
+  });
+
+  it('labels a two-selection measurement with the diff classification in diff mode', async () => {
+    const canvas = await mountWithTwoLines();
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+    await vi.waitFor(() => expect(
+      document.querySelector('[data-testid="viewer-diff-counts"]').textContent,
+    ).toBe('Aのみ 1 / 共通 0 / Bのみ 1'));
+
+    clickCanvas(canvas, 200, 176);
+    clickCanvas(canvas, 200, 64);
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('最小距離 3.000 mm ／ A: Aのみ（a.hpgl）の線分 ／ B: Bのみ（b.hpgl）の線分');
+  });
+
+  it('clears an active selection when a compare target select changes', async () => {
+    stubCanvasRect();
+    const files = [
+      hpglFile('a.hpgl'),
+      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
+      hpglFile('c.hpgl', 'PU;', { lastModified: 789 }),
+    ];
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(inputFiles => ({
+        promise: Promise.resolve(previewResult(inputFiles)),
+        cancel: vi.fn(),
+      })),
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-mode-diff"]').disabled).toBe(false));
+
+    document.querySelector('[data-testid="viewer-mode-diff"]').click();
+    const compareA = document.querySelector('[data-testid="viewer-compare-a"]');
+    expect(compareA).not.toBeNull();
+
+    // With compareA=0/compareB=1, the diff view's fitted bounds cover the two
+    // lines at [[0,0],[1,1]] and [[1,0],[2,1]]; (0.5, 0.5) is the midpoint of
+    // the first (onlyA) line.
+    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
+    clickCanvas(canvas, 106, 120);
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .not.toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+
+    compareA.value = '2';
+    compareA.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
   });
 });

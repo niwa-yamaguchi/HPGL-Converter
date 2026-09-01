@@ -15,6 +15,10 @@ const fakeCanvas = (width, height) => {
     translate: vi.fn(),
     rotate: vi.fn(),
     fillText: vi.fn(),
+    setLineDash: vi.fn(),
+    fill: vi.fn(),
+    fillRect: vi.fn(),
+    measureText: vi.fn(() => ({ width: 90 })),
   };
   const canvas = {
     width: 0,
@@ -85,5 +89,125 @@ describe('canvas renderer', () => {
     expect(context.beginPath).not.toHaveBeenCalled();
     expect(context.stroke).not.toHaveBeenCalled();
     expect(context.fillText).not.toHaveBeenCalled();
+  });
+});
+
+describe('measurement overlay', () => {
+  const overlayGroups = [{
+    color: '#146fae',
+    geometries: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+  }];
+
+  it('draws highlights and a dashed segment with round markers', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: {
+        highlights: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+        segment: [[0, 0], [0, 4]],
+      },
+    });
+
+    expect(context.setLineDash).toHaveBeenCalledWith([6, 4]);
+    expect(context.setLineDash).toHaveBeenLastCalledWith([]);
+    expect(context.strokeStyle).toBe('#ffffff');
+    expect(context.globalAlpha).toBe(1);
+    expect(context.arc).toHaveBeenNthCalledWith(1, 150, 170, 3.5, 0, Math.PI * 2);
+    expect(context.arc).toHaveBeenNthCalledWith(2, 150, 130, 3.5, 0, Math.PI * 2);
+    expect(context.fill).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws a single marker and no dashes when both points coincide', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: { highlights: [], segment: [[2, 2], [2, 2]] },
+    });
+
+    expect(context.setLineDash).not.toHaveBeenCalledWith([6, 4]);
+    expect(context.fill).toHaveBeenCalledTimes(1);
+  });
+
+  it('dims the whole overlay while the blink is off', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: {
+        highlights: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+        segment: [[0, 0], [0, 4]],
+        highlightOn: false,
+      },
+    });
+
+    expect(context.strokeStyle).toBe('#ffffff');
+    expect(context.globalAlpha).toBe(0.3);
+    expect(context.fill).toHaveBeenCalledTimes(2);
+  });
+
+  it('labels the dashed segment beside its midpoint', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: {
+        highlights: [],
+        segment: [[0, 0], [0, 4]],
+        label: '最小距離 4.000 mm',
+      },
+    });
+
+    // The segment runs from (150, 170) to (150, 130), so its midpoint is (150, 150)
+    // and the 12px normal offset puts the label at (138, 150).
+    expect(context.fillText).toHaveBeenCalledWith('最小距離 4.000 mm', 138, 150);
+    expect(context.fillRect).toHaveBeenCalledWith(87, 141, 102, 18);
+    expect(context.textAlign).toBe('center');
+    expect(context.textBaseline).toBe('middle');
+    expect(context.font).toBe('12px sans-serif');
+  });
+
+  it('keeps the label opaque while the highlight is dimmed', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: {
+        highlights: [{ type: 'line', points: [[0, 0], [10, 0]] }],
+        segment: [[0, 0], [0, 4]],
+        label: '最小距離 4.000 mm',
+        highlightOn: false,
+      },
+    });
+
+    expect(context.globalAlpha).toBe(1);
+    expect(context.fillStyle).toBe('#ffffff');
+  });
+
+  it('offsets the label from the marker when both points coincide', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: { highlights: [], segment: [[2, 2], [2, 2]], label: '最小距離 0.000 mm' },
+    });
+
+    // The marker sits at (170, 150), so the label is offset to (182, 138).
+    expect(context.fillText).toHaveBeenCalledWith('最小距離 0.000 mm', 182, 138);
+  });
+
+  it('draws no label when the overlay carries none', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, {
+      devicePixelRatio: 1,
+      overlay: { highlights: [], segment: [[0, 0], [0, 4]], label: null },
+    });
+
+    expect(context.fillText).not.toHaveBeenCalled();
+    expect(context.fillRect).not.toHaveBeenCalled();
+  });
+
+  it('leaves rendering unchanged when no overlay is given', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, overlayGroups, viewport, { devicePixelRatio: 1, overlay: null });
+
+    expect(context.setLineDash).not.toHaveBeenCalled();
+    expect(context.fill).not.toHaveBeenCalled();
+    expect(context.lineWidth).toBe(1.25);
   });
 });
