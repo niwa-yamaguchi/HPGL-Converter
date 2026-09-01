@@ -602,7 +602,33 @@ describe('mountApp', () => {
       document.querySelector('[data-testid="viewer-canvas"]'),
       [],
       expect.any(Object),
+      expect.any(Object),
     ));
+  });
+
+  it('shows the measurement hint before anything is selected', () => {
+    mount({ createConversionJob: vi.fn() });
+
+    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
+      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+    expect(document.querySelector('[data-testid="viewer-canvas"]').getAttribute('tabindex'))
+      .toBe('0');
+  });
+
+  it('passes an overlay slot to the renderer', async () => {
+    const renderViewer = vi.fn();
+    mount({
+      createConversionJob: vi.fn(),
+      createPreviewJob: vi.fn(files => ({
+        promise: Promise.resolve(previewResult(files)),
+        cancel: vi.fn(),
+      })),
+      renderViewer,
+    });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('a.hpgl')]);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[1]).toHaveLength(1));
+    expect(renderViewer.mock.lastCall[3]).toEqual({ overlay: null });
   });
 
   it('clears stale preview counts before reparsing and after a preview failure', async () => {

@@ -18,6 +18,7 @@ import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-cl
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
 
 const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99';
+const MEASURE_HINT = '図形をクリックすると2つの図形の最小距離を表示します。';
 const MAX_VISIBLE_DIAGNOSTICS = 100;
 const VIEWER_COLORS = [
   '#2f80ed', '#e67e22', '#27ae60', '#9b51e0',
@@ -138,9 +139,10 @@ export function mountApp(root, deps = {}) {
           </div>
         </div>
         <p class="viewer-status" data-testid="viewer-status" aria-live="polite">ファイルを追加すると自動表示します。</p>
+        <p class="viewer-measure" data-testid="viewer-measure" aria-live="polite"></p>
         <div class="viewer-controls" data-testid="viewer-controls"></div>
         <div class="viewer-stage">
-          <canvas data-testid="viewer-canvas" aria-label="HPGL図面プレビュー"></canvas>
+          <canvas data-testid="viewer-canvas" aria-label="HPGL図面プレビュー" tabindex="0"></canvas>
           <p class="viewer-empty" data-testid="viewer-empty">表示できる図形がありません。</p>
         </div>
       </section>
@@ -188,6 +190,7 @@ export function mountApp(root, deps = {}) {
     fileList: root.querySelector('[data-testid="file-list"]'),
     fileCount: root.querySelector('[data-testid="file-count"]'),
     viewerStatus: root.querySelector('[data-testid="viewer-status"]'),
+    viewerMeasure: root.querySelector('[data-testid="viewer-measure"]'),
     viewerControls: root.querySelector('[data-testid="viewer-controls"]'),
     viewerCanvas: root.querySelector('[data-testid="viewer-canvas"]'),
     viewerEmpty: root.querySelector('[data-testid="viewer-empty"]'),
@@ -232,6 +235,8 @@ export function mountApp(root, deps = {}) {
     viewport: fitViewport(null, 1, 1),
     frameRequest: null,
     destroyed: false,
+    selection: [],
+    measurement: null,
   };
   const listeners = [];
   let viewerResizeObserver = null;
@@ -298,6 +303,22 @@ export function mountApp(root, deps = {}) {
       }));
   }
 
+  function measureOverlay() {
+    if (state.selection.length === 0) {
+      return null;
+    }
+    return {
+      highlights: state.selection.map(item => item.geometry),
+      segment: state.measurement
+        ? [state.measurement.pointA, state.measurement.pointB]
+        : null,
+    };
+  }
+
+  function renderMeasure() {
+    nodes.viewerMeasure.textContent = MEASURE_HINT;
+  }
+
   function scheduleViewerRender() {
     if (state.destroyed || state.frameRequest !== null) {
       return;
@@ -308,7 +329,7 @@ export function mountApp(root, deps = {}) {
         return;
       }
       const groups = viewerGroups();
-      renderViewer(nodes.viewerCanvas, groups, state.viewport);
+      renderViewer(nodes.viewerCanvas, groups, state.viewport, { overlay: measureOverlay() });
       nodes.viewerEmpty.hidden = groups.some(group => group.geometries.length > 0);
     });
   }
@@ -1123,6 +1144,7 @@ export function mountApp(root, deps = {}) {
     viewerResizeObserver.observe(nodes.viewerCanvas);
   }
 
+  renderMeasure();
   renderFiles();
   renderPreviewControls();
   fitPreview();
