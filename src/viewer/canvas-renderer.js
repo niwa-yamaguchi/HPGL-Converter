@@ -47,6 +47,38 @@ const renderGeometry = (context, geometry, viewport, screenPoint) => {
 const HIGHLIGHT_COLOR = '#ffffff';
 const HIGHLIGHT_DIM_ALPHA = 0.3;
 const MARKER_RADIUS = 3.5;
+const LABEL_FONT_SIZE = 12;
+const LABEL_OFFSET = 12;
+const LABEL_PADDING_X = 6;
+const LABEL_HEIGHT = 18;
+const LABEL_BACKGROUND = 'rgba(12, 23, 36, 0.85)';
+
+const labelAnchor = (from, to, coincident) => {
+  if (coincident) {
+    return [from[0] + LABEL_OFFSET, from[1] - LABEL_OFFSET];
+  }
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const length = Math.hypot(dx, dy);
+  const normal = dy / length > 0 ? [-dy / length, dx / length] : [dy / length, -dx / length];
+  return [
+    from[0] + dx / 2 + normal[0] * LABEL_OFFSET,
+    from[1] + dy / 2 + normal[1] * LABEL_OFFSET,
+  ];
+};
+
+const renderLabel = (context, text, anchor) => {
+  // The label is read rather than looked at, so it stays opaque through the blink.
+  context.globalAlpha = 1;
+  context.font = `${LABEL_FONT_SIZE}px sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  const width = context.measureText(text).width + 2 * LABEL_PADDING_X;
+  context.fillStyle = LABEL_BACKGROUND;
+  context.fillRect(anchor[0] - width / 2, anchor[1] - LABEL_HEIGHT / 2, width, LABEL_HEIGHT);
+  context.fillStyle = HIGHLIGHT_COLOR;
+  context.fillText(text, anchor[0], anchor[1]);
+};
 
 const renderOverlay = (context, overlay, viewport, screenPoint) => {
   if (!overlay) {
@@ -80,6 +112,10 @@ const renderOverlay = (context, overlay, viewport, screenPoint) => {
     context.arc(point[0], point[1], MARKER_RADIUS, 0, Math.PI * 2);
     context.fill();
   });
+
+  if (overlay.label) {
+    renderLabel(context, overlay.label, labelAnchor(from, to, coincident));
+  }
 };
 
 export function renderViewer(canvas, groups, viewport, options = {}) {

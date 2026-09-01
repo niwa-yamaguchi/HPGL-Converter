@@ -206,9 +206,10 @@ describe('mountApp', () => {
     return document.querySelector('[data-testid="viewer-canvas"]');
   }
 
-  async function mountWithGeometries(geometries) {
+  async function mountWithGeometries(geometries, extra = {}) {
     stubCanvasRect();
     mount({
+      ...extra,
       createConversionJob: vi.fn(),
       createPreviewJob: vi.fn(() => ({
         promise: Promise.resolve({
@@ -1185,6 +1186,35 @@ describe('mountApp', () => {
 
     expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
       .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
+  });
+
+  it('hands the distance label to the renderer', async () => {
+    const renderViewer = vi.fn();
+    const canvas = await mountWithTwoLines({ renderViewer });
+
+    clickCanvas(canvas, 200, 176);
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay).not.toBe(null));
+    expect(renderViewer.mock.lastCall[3].overlay.label).toBe(null);
+
+    clickCanvas(canvas, 200, 64);
+
+    await vi.waitFor(
+      () => expect(renderViewer.mock.lastCall[3].overlay.label).toBe('最小距離 3.000 mm'),
+    );
+  });
+
+  it('marks contact in the canvas label as well as the status row', async () => {
+    const renderViewer = vi.fn();
+    const canvas = await mountWithGeometries([
+      line([[-5, -5], [5, 5]]),
+      line([[-5, 5], [5, -5]]),
+    ], { renderViewer });
+
+    clickCanvas(canvas, 243, 77);
+    clickCanvas(canvas, 157, 77);
+
+    await vi.waitFor(() => expect(renderViewer.mock.lastCall[3].overlay.label)
+      .toBe('最小距離 0.000 mm（接触または交差）'));
   });
 
   function stubBlinkTimers() {

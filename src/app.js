@@ -347,6 +347,15 @@ export function mountApp(root, deps = {}) {
         : []));
   }
 
+  function measurementText() {
+    if (state.measurement === null) {
+      return null;
+    }
+    const distance = state.measurement.distance.toFixed(3);
+    const contact = distance === '0.000' ? '（接触または交差）' : '';
+    return { distance, contact, label: `最小距離 ${distance} mm${contact}` };
+  }
+
   function measureOverlay() {
     if (state.selection.length === 0) {
       return null;
@@ -356,6 +365,7 @@ export function mountApp(root, deps = {}) {
       segment: state.measurement
         ? [state.measurement.pointA, state.measurement.pointB]
         : null,
+      label: measurementText()?.label ?? null,
       highlightOn: state.blinkOn,
     };
   }
@@ -371,8 +381,7 @@ export function mountApp(root, deps = {}) {
       return;
     }
     const [first, second] = state.selection;
-    const distance = state.measurement.distance.toFixed(3);
-    const contact = distance === '0.000' ? '（接触または交差）' : '';
+    const { distance, contact } = measurementText();
     nodes.viewerMeasure.replaceChildren(
       document.createTextNode('最小距離 '),
       element('b', '', `${distance} mm`),
