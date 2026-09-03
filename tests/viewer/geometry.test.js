@@ -1,36 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  angleInSweep, assertViewerGeometry, combinedBounds, compareGeometrySets, fitViewport, geometryBounds, geometryKey,
+  angleInSweep, assertViewerGeometry, combinedBounds, fitViewport, geometryBounds,
   panViewport, zoomViewport,
 } from '../../src/viewer/geometry.js';
 
 const line = (points, extra = {}) => ({ type: 'line', points, ...extra });
 
 describe('viewer geometry', () => {
-  it('matches reversed lines within 0.001 mm and ignores metadata', () => {
-    const a = line([[0, 1], [2, 3]], { layer: 'A', fileName: 'a', offset: 1 });
-    const b = line([[2.0004, 3], [-0, 1]], { layer: 'B', fileName: 'b', offset: 99 });
-    expect(geometryKey(a)).toBe(geometryKey(b));
-  });
-
-  it('compares duplicate geometries as a multiset', () => {
-    const common = line([[0, 0], [1, 1]]);
-    const onlyA = { type: 'circle', center: [3, 4], radius: 2 };
-    const onlyB = { type: 'text', point: [5, 6], text: 'B', height: 5, rotation: 0 };
-    const result = compareGeometrySets([common, common, onlyA], [common, onlyB]);
-    expect(result.common).toEqual([common]);
-    expect(result.onlyA).toEqual([common, onlyA]);
-    expect(result.onlyB).toEqual([onlyB]);
-  });
-
-  it('treats reversed polylines as equal but preserves arc direction', () => {
-    const forward = { type: 'polyline', points: [[0, 0], [1, 2], [3, 4]] };
-    const reverse = { type: 'polyline', points: [[3, 4], [1, 2], [0, 0]] };
-    expect(geometryKey(forward)).toBe(geometryKey(reverse));
-    expect(geometryKey({ type: 'arc', center: [0, 0], radius: 2, startAngle: 0, endAngle: 90 }))
-      .not.toBe(geometryKey({ type: 'arc', center: [0, 0], radius: 2, startAngle: 90, endAngle: 0 }));
-  });
-
   it('includes circle and swept arc extrema in finite combined bounds', () => {
     const bounds = combinedBounds([
       { type: 'circle', center: [10, 10], radius: 2 },
@@ -55,11 +31,10 @@ describe('viewer geometry', () => {
   });
 
   it('rejects invalid geometry arrays, types, coordinates, and sizes', () => {
-    expect(() => geometryKey(null)).toThrow(TypeError);
-    expect(() => geometryKey(line([[0, 0], [Number.NaN, 1]]))).toThrow(RangeError);
+    expect(() => geometryBounds(null)).toThrow(TypeError);
     expect(() => geometryBounds({ type: 'circle', center: [0, 0], radius: Infinity })).toThrow(RangeError);
     expect(() => geometryBounds({ type: 'unknown' })).toThrow(TypeError);
-    expect(() => compareGeometrySets('not an array', [])).toThrow(TypeError);
+    expect(() => combinedBounds('not an array')).toThrow(TypeError);
     expect(() => combinedBounds([line([[0, 0], [1]])])).toThrow(TypeError);
   });
 

@@ -1,4 +1,3 @@
-const PRECISION = 1000;
 const VIEWPORT_MIN_SCALE = 1e-6;
 const VIEWPORT_MAX_SCALE = 1e6;
 
@@ -93,68 +92,6 @@ const assertViewport = viewport => {
     throw new RangeError('viewport.scale must be positive');
   }
 };
-
-const rounded = value => {
-  const result = Math.round(value * PRECISION) / PRECISION;
-  if (!Number.isFinite(result)) {
-    throw new RangeError('Rounded geometry value must be finite');
-  }
-  return Object.is(result, -0) ? 0 : result;
-};
-const pointKey = point => `${rounded(point[0])},${rounded(point[1])}`;
-const angle = value => {
-  const result = rounded(((value % 360) + 360) % 360);
-  return result === 360 ? 0 : result;
-};
-
-export function geometryKey(geometry) {
-  assertViewerGeometry(geometry);
-  switch (geometry.type) {
-    case 'line': {
-      const points = geometry.points.map(pointKey).sort();
-      return `line|${points.join('|')}`;
-    }
-    case 'polyline': {
-      const forward = geometry.points.map(pointKey).join('|');
-      const reverse = [...geometry.points].reverse().map(pointKey).join('|');
-      return `polyline|${forward < reverse ? forward : reverse}`;
-    }
-    case 'circle':
-      return `circle|${pointKey(geometry.center)}|${rounded(geometry.radius)}`;
-    case 'arc':
-      return `arc|${pointKey(geometry.center)}|${rounded(geometry.radius)}|${angle(geometry.startAngle)}|${rounded(geometry.endAngle - geometry.startAngle)}`;
-    case 'text':
-      return `text|${pointKey(geometry.point)}|${JSON.stringify(geometry.text)}|${rounded(geometry.height)}|${angle(geometry.rotation)}`;
-    default:
-      throw new TypeError(`Unknown viewer geometry type: ${String(geometry.type)}`);
-  }
-}
-
-export function compareGeometrySets(a, b) {
-  assertArray(a, 'a');
-  assertArray(b, 'b');
-  const available = new Map();
-  b.forEach((geometry, index) => {
-    const key = geometryKey(geometry);
-    const queue = available.get(key) ?? [];
-    queue.push(index);
-    available.set(key, queue);
-  });
-  const common = [];
-  const onlyA = [];
-  const matchedB = new Set();
-  a.forEach(geometry => {
-    const queue = available.get(geometryKey(geometry));
-    if (queue?.length) {
-      matchedB.add(queue.shift());
-      common.push(geometry);
-    } else {
-      onlyA.push(geometry);
-    }
-  });
-  const onlyB = b.filter((_geometry, index) => !matchedB.has(index));
-  return { onlyA, common, onlyB };
-}
 
 const positiveMod = value => ((value % 360) + 360) % 360;
 const pointAt = (center, radius, degrees) => {
