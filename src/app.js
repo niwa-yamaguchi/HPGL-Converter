@@ -12,7 +12,7 @@ import {
 import { assignLayerNames } from './files/layer-names.js';
 import { renderViewer as renderDefaultViewer } from './viewer/canvas-renderer.js';
 import {
-  combinedBounds, compareGeometrySets, fitViewport, panViewport, zoomViewport,
+  combinedBounds, fitViewport, panViewport, zoomViewport,
 } from './viewer/geometry.js';
 import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-client.js';
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
@@ -70,7 +70,6 @@ export function mountApp(root, deps = {}) {
   const createUploadExpansionJob = deps.createUploadExpansionJob
     ?? createDefaultUploadExpansionJob;
   const renderViewer = deps.renderViewer ?? renderDefaultViewer;
-  const compareGeometries = deps.compareGeometrySets ?? compareGeometrySets;
   if (typeof createConversionJob !== 'function') {
     throw new TypeError('createConversionJob must be a function');
   }
@@ -82,9 +81,6 @@ export function mountApp(root, deps = {}) {
   }
   if (typeof renderViewer !== 'function') {
     throw new TypeError('renderViewer must be a function');
-  }
-  if (typeof compareGeometries !== 'function') {
-    throw new TypeError('compareGeometrySets must be a function');
   }
 
   root.innerHTML = `
@@ -144,8 +140,6 @@ export function mountApp(root, deps = {}) {
         <div class="section-heading viewer-heading-row">
           <div><p class="step-label">PREVIEW</p><h2 id="viewer-heading">プレビュー</h2></div>
           <div class="viewer-actions">
-            <label><input type="radio" name="viewer-mode" value="normal" data-testid="viewer-mode-normal" checked>通常表示</label>
-            <label><input type="radio" name="viewer-mode" value="diff" data-testid="viewer-mode-diff" disabled>差分表示</label>
             <button type="button" class="icon-button" data-testid="viewer-fit">全体表示</button>
           </div>
         </div>
@@ -206,8 +200,6 @@ export function mountApp(root, deps = {}) {
     viewerCanvas: root.querySelector('[data-testid="viewer-canvas"]'),
     viewerEmpty: root.querySelector('[data-testid="viewer-empty"]'),
     viewerFit: root.querySelector('[data-testid="viewer-fit"]'),
-    viewerModeNormal: root.querySelector('[data-testid="viewer-mode-normal"]'),
-    viewerModeDiff: root.querySelector('[data-testid="viewer-mode-diff"]'),
     outputName: root.querySelector('[data-testid="output-name"]'),
     convert: root.querySelector('[data-testid="convert-button"]'),
     cancel: root.querySelector('[data-testid="cancel-button"]'),
@@ -239,10 +231,6 @@ export function mountApp(root, deps = {}) {
     previewStatus: 'idle',
     previewFiles: [],
     visiblePreviewFiles: new Set(),
-    viewerMode: 'normal',
-    compareA: 0,
-    compareB: 1,
-    diffComparisonCache: null,
     viewport: fitViewport(null, 1, 1),
     frameRequest: null,
     destroyed: false,
@@ -280,33 +268,7 @@ export function mountApp(root, deps = {}) {
     };
   }
 
-  function currentDiffComparison() {
-    const a = state.previewFiles[state.compareA];
-    const b = state.previewFiles[state.compareB];
-    if (!a || !b || state.compareA === state.compareB) {
-      return null;
-    }
-    if (state.diffComparisonCache?.a === a && state.diffComparisonCache?.b === b) {
-      return state.diffComparisonCache;
-    }
-    const difference = compareGeometries(a.geometries, b.geometries);
-    state.diffComparisonCache = {
-      a,
-      b,
-      difference,
-      groups: [
-        { color: '#2574a9', opacity: 0.9, geometries: difference.onlyA },
-        { color: '#98a2ad', opacity: 0.72, geometries: difference.common },
-        { color: '#d97706', opacity: 0.9, geometries: difference.onlyB },
-      ],
-    };
-    return state.diffComparisonCache;
-  }
-
   function viewerGroups() {
-    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
-      return currentDiffComparison()?.groups ?? [];
-    }
     return state.previewFiles
       .map((file, index) => ({ file, index }))
       .filter(({ index }) => state.visiblePreviewFiles.has(index))
@@ -322,20 +284,6 @@ export function mountApp(root, deps = {}) {
   }
 
   function measureCandidates() {
-    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
-      const comparison = currentDiffComparison();
-      if (!comparison) {
-        return [];
-      }
-      const { a, b, difference } = comparison;
-      return [
-        { geometries: difference.onlyA, source: `Aのみ（${a.name}）` },
-        { geometries: difference.common, source: `共通（${a.name} と ${b.name}）` },
-        { geometries: difference.onlyB, source: `Bのみ（${b.name}）` },
-      ].flatMap(({ geometries, source }) => geometries
-        .filter(isMeasurable)
-        .map(geometry => ({ geometry, label: `${source}の${GEOMETRY_LABELS[geometry.type]}` })));
-    }
     return state.previewFiles
       .flatMap((file, index) => (state.visiblePreviewFiles.has(index)
         ? file.geometries
@@ -509,72 +457,8 @@ export function mountApp(root, deps = {}) {
     scheduleViewerRender();
   }
 
-  function ensureDifferentComparisons(changed) {
-    const lastIndex = state.previewFiles.length - 1;
-    state.compareA = Math.min(Math.max(0, state.compareA), Math.max(0, lastIndex));
-    state.compareB = Math.min(Math.max(0, state.compareB), Math.max(0, lastIndex));
-    if (state.previewFiles.length >= 2 && state.compareA === state.compareB) {
-      if (changed === 'a') {
-        state.compareB = state.compareA === 0 ? 1 : 0;
-      } else {
-        state.compareA = state.compareB === 0 ? 1 : 0;
-      }
-    }
-  }
-
-  function appendCompareOptions(select, selectedIndex) {
-    state.previewFiles.forEach((file, index) => {
-      const option = element('option', '', file.name);
-      option.value = String(index);
-      option.selected = index === selectedIndex;
-      select.append(option);
-    });
-  }
-
   function renderPreviewControls() {
     nodes.viewerControls.replaceChildren();
-    nodes.viewerModeNormal.checked = state.viewerMode === 'normal';
-    nodes.viewerModeDiff.checked = state.viewerMode === 'diff';
-    nodes.viewerModeDiff.disabled = state.previewFiles.length < 2;
-
-    if (state.viewerMode === 'diff' && state.previewFiles.length >= 2) {
-      ensureDifferentComparisons();
-      const controls = element('div', 'viewer-diff-controls');
-      const aLabel = element('label', '', 'A ');
-      const aSelect = element('select');
-      aSelect.dataset.testid = 'viewer-compare-a';
-      appendCompareOptions(aSelect, state.compareA);
-      aLabel.append(aSelect);
-      const bLabel = element('label', '', 'B ');
-      const bSelect = element('select');
-      bSelect.dataset.testid = 'viewer-compare-b';
-      appendCompareOptions(bSelect, state.compareB);
-      bLabel.append(bSelect);
-      const difference = currentDiffComparison().difference;
-      const counts = element(
-        'p',
-        'viewer-diff-counts',
-        `Aのみ ${difference.onlyA.length} / 共通 ${difference.common.length} / Bのみ ${difference.onlyB.length}`,
-      );
-      counts.dataset.testid = 'viewer-diff-counts';
-      aSelect.addEventListener('change', () => {
-        state.compareA = Number(aSelect.value);
-        ensureDifferentComparisons('a');
-        clearSelection();
-        renderPreviewControls();
-        fitPreview();
-      });
-      bSelect.addEventListener('change', () => {
-        state.compareB = Number(bSelect.value);
-        ensureDifferentComparisons('b');
-        clearSelection();
-        renderPreviewControls();
-        fitPreview();
-      });
-      controls.append(aLabel, bLabel, counts);
-      nodes.viewerControls.append(controls);
-      return;
-    }
 
     const legend = element('div', 'viewer-legend');
     state.previewFiles.forEach((file, index) => {
@@ -614,12 +498,6 @@ export function mountApp(root, deps = {}) {
     clearSelection();
     state.previewFiles = Array.isArray(previewResult?.files) ? previewResult.files : [];
     state.visiblePreviewFiles = new Set(state.previewFiles.map((_file, index) => index));
-    state.compareA = 0;
-    state.compareB = 1;
-    state.diffComparisonCache = null;
-    if (state.viewerMode === 'diff' && state.previewFiles.length < 2) {
-      state.viewerMode = 'normal';
-    }
     setPreviewStatus('ready', `${state.previewFiles.length}ファイルのプレビューを表示しています。`);
     renderFiles();
     renderPreviewControls();
@@ -634,8 +512,6 @@ export function mountApp(root, deps = {}) {
     clearSelection();
     state.previewFiles = [];
     state.visiblePreviewFiles.clear();
-    state.diffComparisonCache = null;
-    state.viewerMode = 'normal';
     const cancelled = error?.name === 'AbortError';
     const message = error instanceof Error && error.message ? error.message : '不明なエラー';
     setPreviewStatus(
@@ -661,10 +537,6 @@ export function mountApp(root, deps = {}) {
     }
     state.previewFiles = [];
     state.visiblePreviewFiles.clear();
-    state.viewerMode = 'normal';
-    state.compareA = 0;
-    state.compareB = 1;
-    state.diffComparisonCache = null;
     renderPreviewControls();
     renderFiles();
     fitPreview();
@@ -1233,25 +1105,6 @@ export function mountApp(root, deps = {}) {
     state.outputNameEdited = true;
   });
   listen(nodes.convert, 'click', startConversion);
-  listen(nodes.viewerModeNormal, 'change', () => {
-    if (!nodes.viewerModeNormal.checked) {
-      return;
-    }
-    state.viewerMode = 'normal';
-    clearSelection();
-    renderPreviewControls();
-    fitPreview();
-  });
-  listen(nodes.viewerModeDiff, 'change', () => {
-    if (!nodes.viewerModeDiff.checked || state.previewFiles.length < 2) {
-      return;
-    }
-    state.viewerMode = 'diff';
-    clearSelection();
-    ensureDifferentComparisons();
-    renderPreviewControls();
-    fitPreview();
-  });
   listen(nodes.viewerFit, 'click', fitPreview);
   listen(nodes.viewerCanvas, 'wheel', event => {
     event.preventDefault();

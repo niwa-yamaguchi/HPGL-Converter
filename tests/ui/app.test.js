@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { mountApp } from '../../src/app.js';
-import { compareGeometrySets as compareGeometrySetsDefault } from '../../src/viewer/geometry.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -575,73 +574,6 @@ describe('mountApp', () => {
     const canvasColors = renderViewer.mock.lastCall[1].map(group => group.color);
     expect(new Set(swatchColors).size).toBe(8);
     expect(new Set(canvasColors).size).toBe(8);
-  });
-
-  it('compares two different files as multisets in diff mode', async () => {
-    const common = line([[0, 0], [1, 1]]);
-    const onlyA = line([[2, 0], [3, 1]]);
-    const onlyB = line([[4, 0], [5, 1]]);
-    const preview = {
-      files: [
-        { ...previewResult([hpglFile('a.hpgl')]).files[0], geometries: [common, onlyA], geometryCount: 2 },
-        { ...previewResult([hpglFile('b.hpgl')]).files[0], geometries: [common, onlyB], geometryCount: 2 },
-      ],
-    };
-    const renderViewer = vi.fn();
-    mount({
-      createConversionJob: vi.fn(),
-      createPreviewJob: vi.fn(() => ({ promise: Promise.resolve(preview), cancel: vi.fn() })),
-      renderViewer,
-    });
-    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
-      hpglFile('a.hpgl'),
-      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
-    ]);
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-mode-diff"]').disabled).toBe(false));
-
-    document.querySelector('[data-testid="viewer-mode-diff"]').click();
-
-    const compareA = document.querySelector('[data-testid="viewer-compare-a"]');
-    const compareB = document.querySelector('[data-testid="viewer-compare-b"]');
-    expect(compareA.value).not.toBe(compareB.value);
-    expect(document.querySelector('[data-testid="viewer-diff-counts"]').textContent)
-      .toBe('Aのみ 1 / 共通 1 / Bのみ 1');
-    await vi.waitFor(() => expect(renderViewer.mock.lastCall[1].map(group => group.geometries.length)).toEqual([1, 1, 1]));
-  });
-
-  it('reuses the cached comparison while zooming and panning', async () => {
-    const compareGeometrySets = vi.fn(compareGeometrySetsDefault);
-    const files = [
-      hpglFile('a.hpgl'),
-      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
-    ];
-    mount({
-      createConversionJob: vi.fn(),
-      createPreviewJob: vi.fn(() => ({
-        promise: Promise.resolve(previewResult(files)),
-        cancel: vi.fn(),
-      })),
-      compareGeometrySets,
-    });
-    setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-mode-diff"]').disabled).toBe(false));
-
-    document.querySelector('[data-testid="viewer-mode-diff"]').click();
-    await vi.waitFor(() => expect(compareGeometrySets).toHaveBeenCalledOnce());
-    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
-
-    canvas.dispatchEvent(new WheelEvent('wheel', {
-      bubbles: true, cancelable: true, clientX: 50, clientY: 40, deltaY: -100,
-    }));
-    canvas.dispatchEvent(new MouseEvent('pointerdown', {
-      bubbles: true, button: 0, clientX: 50, clientY: 40,
-    }));
-    canvas.dispatchEvent(new MouseEvent('pointermove', {
-      bubbles: true, clientX: 65, clientY: 50,
-    }));
-    await flush();
-
-    expect(compareGeometrySets).toHaveBeenCalledOnce();
   });
 
   it('cancels the previous preview and ignores its stale completion', async () => {
@@ -1321,16 +1253,6 @@ describe('mountApp', () => {
       .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
   });
 
-  it('clears the selection when the viewer mode changes', async () => {
-    const canvas = await mountWithTwoLines();
-    clickCanvas(canvas, 200, 176);
-
-    document.querySelector('[data-testid="viewer-mode-diff"]').click();
-
-    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
-      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
-  });
-
   it('clears the selection when a new preview starts', async () => {
     const canvas = await mountWithTwoLines();
     clickCanvas(canvas, 200, 176);
@@ -1379,55 +1301,5 @@ describe('mountApp', () => {
     expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
       .toBe('距離を計算できませんでした。');
     expect(document.querySelector('[data-testid="viewer-status"]').dataset.kind).toBe('ready');
-  });
-
-  it('labels a two-selection measurement with the diff classification in diff mode', async () => {
-    const canvas = await mountWithTwoLines();
-    document.querySelector('[data-testid="viewer-mode-diff"]').click();
-    await vi.waitFor(() => expect(
-      document.querySelector('[data-testid="viewer-diff-counts"]').textContent,
-    ).toBe('Aのみ 1 / 共通 0 / Bのみ 1'));
-
-    clickCanvas(canvas, 200, 176);
-    clickCanvas(canvas, 200, 64);
-
-    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
-      .toBe('最小距離 3.000 mm ／ A: Aのみ（a.hpgl）の線分 ／ B: Bのみ（b.hpgl）の線分');
-  });
-
-  it('clears an active selection when a compare target select changes', async () => {
-    stubCanvasRect();
-    const files = [
-      hpglFile('a.hpgl'),
-      hpglFile('b.hpgl', 'PU;', { lastModified: 456 }),
-      hpglFile('c.hpgl', 'PU;', { lastModified: 789 }),
-    ];
-    mount({
-      createConversionJob: vi.fn(),
-      createPreviewJob: vi.fn(inputFiles => ({
-        promise: Promise.resolve(previewResult(inputFiles)),
-        cancel: vi.fn(),
-      })),
-    });
-    setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-mode-diff"]').disabled).toBe(false));
-
-    document.querySelector('[data-testid="viewer-mode-diff"]').click();
-    const compareA = document.querySelector('[data-testid="viewer-compare-a"]');
-    expect(compareA).not.toBeNull();
-
-    // With compareA=0/compareB=1, the diff view's fitted bounds cover the two
-    // lines at [[0,0],[1,1]] and [[1,0],[2,1]]; (0.5, 0.5) is the midpoint of
-    // the first (onlyA) line.
-    const canvas = document.querySelector('[data-testid="viewer-canvas"]');
-    clickCanvas(canvas, 106, 120);
-    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
-      .not.toBe('図形をクリックすると2つの図形の最小距離を表示します。');
-
-    compareA.value = '2';
-    compareA.dispatchEvent(new Event('change', { bubbles: true }));
-
-    expect(document.querySelector('[data-testid="viewer-measure"]').textContent)
-      .toBe('図形をクリックすると2つの図形の最小距離を表示します。');
   });
 });

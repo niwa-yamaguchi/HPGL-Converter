@@ -194,17 +194,14 @@ h2 {
 }
 
 .viewer-actions,
-.viewer-legend,
-.viewer-diff-controls {
+.viewer-legend {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
   align-items: center;
 }
 
-.viewer-actions label,
-.viewer-layer-option,
-.viewer-diff-controls label {
+.viewer-layer-option {
   display: inline-flex;
   gap: 7px;
   align-items: center;
@@ -272,21 +269,6 @@ h2 {
 
 .viewer-measure b {
   font-weight: 600;
-}
-
-.viewer-diff-controls select {
-  min-height: 38px;
-  padding: 6px 9px;
-  border: 1px solid #94a5b2;
-  border-radius: 7px;
-  background: #fff;
-  color: #10243e;
-}
-
-.viewer-diff-counts {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
 }
 
 .primary-button {
@@ -661,11 +643,6 @@ progress {
 
   .viewer-stage canvas {
     height: 280px;
-  }
-
-  .viewer-diff-controls label,
-  .viewer-diff-controls select {
-    width: 100%;
   }
 }
 
