@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyInputName,
   defaultOutputName,
   fileIdentity,
   isZipName,
   isSupportedHpglName,
+  isSupportedInputName,
   normalizeOutputName,
 } from '../../src/files/file-policy.js';
 
@@ -52,6 +54,35 @@ describe('isSupportedHpglName', () => {
       expect(isSupportedHpglName(name)).toBe(false);
     },
   );
+});
+
+describe('classifyInputName', () => {
+  it.each([
+    ['board.gtl', 'gerber'], ['board.G09', 'gerber'], ['board.gbr', 'gerber'],
+    ['board.drl', 'excellon'], ['board.dr1', 'excellon'],
+    ['P-00620-1_X-GBLIST.txt', 'gerber-list'],
+    ['P-00620-1_DRLIST_M.txt', 'drill-list'],
+    ['drawing.H01', 'hpgl'], ['bundle.zip', 'zip'], ['board.pdf', 'unsupported'],
+  ])('classifies %s as %s', (name, expected) => {
+    expect(classifyInputName(name)).toBe(expected);
+  });
+});
+
+describe('isSupportedInputName', () => {
+  it.each([
+    'board.gtl',
+    'board.drl',
+    'P-00620-1_X-GBLIST.txt',
+    'P-00620-1_DRLIST_M.txt',
+    'drawing.H01',
+    'bundle.zip',
+  ])('accepts supported input name %s', name => {
+    expect(isSupportedInputName(name)).toBe(true);
+  });
+
+  it('rejects unsupported names', () => {
+    expect(isSupportedInputName('board.pdf')).toBe(false);
+  });
 });
 
 describe('isZipName', () => {

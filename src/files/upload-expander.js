@@ -1,4 +1,4 @@
-import { isSupportedHpglName, isZipName } from './file-policy.js';
+import { classifyInputName, isSupportedInputName, isZipName } from './file-policy.js';
 import { createNativeInputRecord } from './input-records.js';
 import { createZipExpansionJob } from './zip-reader.js';
 
@@ -31,10 +31,10 @@ export function createUploadExpansionJob(sources, options = {}) {
       if (cancelled) {
         throw abortError();
       }
-      if (isSupportedHpglName(source.name)) {
+      if (isSupportedInputName(source.name) && !isZipName(source.name)) {
         results.push({
           sourceName: source.name,
-          kind: 'hpgl',
+          kind: classifyInputName(source.name),
           items: [createNativeInputRecord(source)],
           ignored: emptyIgnored(),
           error: null,

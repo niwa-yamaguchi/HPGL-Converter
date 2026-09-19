@@ -319,6 +319,30 @@ describe('createZipExpansionJob', () => {
     });
   });
 
+  it('extracts Gerber, Excellon, and drill list entries and ignores PDF and gbrjob', async () => {
+    const source = zipFile({
+      'fab/board.gtl': strToU8('G04 Gerber*'),
+      'fab/board.drl': strToU8('M48'),
+      'fab/board_DRLIST_M.txt': strToU8('list'),
+      'fab/board.pdf': strToU8('%PDF'),
+      'fab/board.gbrjob': strToU8('{}'),
+    });
+
+    const result = await createZipExpansionJob(source).promise;
+
+    expect(result.items.map(item => item.name)).toEqual([
+      'fab/board.gtl',
+      'fab/board.drl',
+      'fab/board_DRLIST_M.txt',
+    ]);
+    expect(result.ignored).toEqual({
+      directories: 0,
+      unsupported: 2,
+      nestedArchives: 0,
+      unsafePaths: 0,
+    });
+  });
+
   it('uses archive content in ZIP entry identities', async () => {
     const mtime = new Date('2020-01-01T00:00:00Z');
     const firstBytes = zipSync({

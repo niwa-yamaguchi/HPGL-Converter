@@ -44,6 +44,28 @@ describe('input records', () => {
     expect(toWorkerInput(record)).toEqual({ name: 'drawing.hpgl', blob: file });
   });
 
+  it('records native kind and file-name path', () => {
+    const file = new File(['G04*'], 'board.gtl', { lastModified: 123 });
+    const record = createNativeInputRecord(file);
+
+    expect(record.kind).toBe('gerber');
+    expect(record.path).toBe('board.gtl');
+  });
+
+  it('records archive kind from the entry leaf and the normalized path', () => {
+    const source = new File(['zip'], 'drawings.zip', { lastModified: 456 });
+    const bytes = new TextEncoder().encode('M48');
+    const record = createArchiveInputRecord(
+      source,
+      'fab/board.drl',
+      bytes,
+      'sha256:abc123',
+    );
+
+    expect(record.kind).toBe('excellon');
+    expect(record.path).toBe('fab/board.drl');
+  });
+
   it.each([null, {}, { name: 'a', blob: {}, size: 0, identity: 'a' }])(
     'rejects invalid input record %j',
     record => expect(() => toWorkerInput(record)).toThrow(TypeError),

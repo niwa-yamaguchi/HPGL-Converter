@@ -37,6 +37,20 @@ describe('createUploadExpansionJob', () => {
     expect(result.results[2].items).toEqual([]);
   });
 
+  it('classifies native Gerber, Excellon, and sidecar lists by name', async () => {
+    const result = await createUploadExpansionJob([
+      file('board.gtl'),
+      file('board.drl'),
+      file('P-00620-1_X-GBLIST.txt'),
+      file('P-00620-1_DRLIST_M.txt'),
+      file('notes.txt'),
+    ]).promise;
+
+    expect(result.results.map(source => source.kind)).toEqual([
+      'gerber', 'excellon', 'gerber-list', 'drill-list', 'unsupported',
+    ]);
+  });
+
   it('keeps later sources after one ZIP fails', async () => {
     const createZipJob = vi.fn(() => ({
       promise: Promise.reject(new Error('broken archive')),

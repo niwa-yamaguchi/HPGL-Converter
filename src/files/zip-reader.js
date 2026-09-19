@@ -1,5 +1,5 @@
 import { AsyncInflate, strFromU8 } from 'fflate';
-import { isSupportedHpglName, isZipName } from './file-policy.js';
+import { isSupportedInputName, isZipName } from './file-policy.js';
 import { createArchiveInputRecord } from './input-records.js';
 
 const MIB = 1024 * 1024;
@@ -410,7 +410,7 @@ function selectEntries(entries, limits) {
       ignored.nestedArchives += 1;
       continue;
     }
-    if (!isSupportedHpglName(name)) {
+    if (!isSupportedInputName(name)) {
       ignored.unsupported += 1;
       continue;
     }

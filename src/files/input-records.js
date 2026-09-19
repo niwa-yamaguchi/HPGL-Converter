@@ -1,4 +1,4 @@
-import { fileIdentity } from './file-policy.js';
+import { classifyInputName, fileIdentity } from './file-policy.js';
 
 function assertBlob(blob, label) {
   if (!(blob instanceof Blob) || typeof blob.arrayBuffer !== 'function') {
@@ -13,6 +13,8 @@ export function createNativeInputRecord(file) {
   }
   return {
     name: file.name,
+    path: file.name,
+    kind: classifyInputName(file.name),
     blob: file,
     size: file.size,
     identity: fileIdentity(file),
@@ -40,6 +42,8 @@ export function createArchiveInputRecord(
   const blob = new Blob([bytes], { type: 'application/octet-stream' });
   return {
     name: entryName,
+    path: entryName,
+    kind: classifyInputName(entryName),
     blob,
     size: blob.size,
     identity: `${fileIdentity(sourceFile)}\0${archiveFingerprint}\0${entryName}`,
