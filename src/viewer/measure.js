@@ -41,9 +41,13 @@ function toElements(geometry) {
     if (geometry.points.length === 1) {
       return [{ kind: 'segment', a: geometry.points[0], b: geometry.points[0] }];
     }
-    return geometry.points.slice(1).map((point, index) => ({
+    const segments = geometry.points.slice(1).map((point, index) => ({
       kind: 'segment', a: geometry.points[index], b: point,
     }));
+    if (geometry.closed === true) {
+      segments.push({ kind: 'segment', a: geometry.points.at(-1), b: geometry.points[0] });
+    }
+    return segments;
   }
   if (geometry.type === 'circle') {
     return [{

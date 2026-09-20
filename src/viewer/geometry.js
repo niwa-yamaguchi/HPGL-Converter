@@ -71,6 +71,10 @@ export const assertViewerGeometry = geometry => {
     default:
       throw new TypeError(`Unknown viewer geometry type: ${String(geometry.type)}`);
   }
+
+  if ('closed' in geometry && typeof geometry.closed !== 'boolean') {
+    throw new TypeError('geometry.closed must be a boolean');
+  }
 };
 
 const assertBounds = bounds => {

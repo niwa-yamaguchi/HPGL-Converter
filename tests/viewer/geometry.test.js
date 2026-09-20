@@ -72,4 +72,17 @@ describe('assertViewerGeometry', () => {
     expect(() => assertViewerGeometry({ type: 'circle', center: [0, 0], radius: Number.NaN }))
       .toThrow(RangeError);
   });
+
+  it('accepts an optional closed boolean on polylines', () => {
+    const points = [[0, 0], [1, 0], [1, 1]];
+    expect(() => assertViewerGeometry({ type: 'polyline', points })).not.toThrow();
+    expect(() => assertViewerGeometry({ type: 'polyline', points, closed: true })).not.toThrow();
+    expect(() => assertViewerGeometry({ type: 'polyline', points, closed: false })).not.toThrow();
+  });
+
+  it('rejects a non-boolean closed flag when present', () => {
+    expect(() => assertViewerGeometry({
+      type: 'polyline', points: [[0, 0], [1, 0], [1, 1]], closed: 1,
+    })).toThrow(TypeError);
+  });
 });

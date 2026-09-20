@@ -1,16 +1,20 @@
 const radians = degrees => degrees * Math.PI / 180;
 
-const tracePoints = (context, points, screenPoint) => {
+const tracePoints = (context, points, screenPoint, closed = false) => {
   const [first, ...rest] = points;
   context.beginPath();
   context.moveTo(...screenPoint(first));
   rest.forEach(point => context.lineTo(...screenPoint(point)));
+  if (closed) {
+    context.lineTo(...screenPoint(first));
+    context.closePath();
+  }
   context.stroke();
 };
 
 const renderGeometry = (context, geometry, viewport, screenPoint) => {
   if (geometry.type === 'line' || geometry.type === 'polyline') {
-    tracePoints(context, geometry.points, screenPoint);
+    tracePoints(context, geometry.points, screenPoint, geometry.closed === true);
     return;
   }
 

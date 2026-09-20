@@ -144,11 +144,12 @@ function polylinePairs(geometry, common, handle, owner) {
   const points = geometry.points.map((point, index) => (
     validatePoint(point, `LWPOLYLINE point ${index}`)
   ));
+  const polylineFlags = geometry.closed === true ? 1 : 0;
   return [
     ...commonPairs('LWPOLYLINE', common, handle, owner),
     [100, ENTITY_SUBCLASSES.LWPOLYLINE[0]],
     [90, points.length],
-    [70, 0],
+    [70, polylineFlags],
     ...points.flatMap(point => [[10, point[0]], [20, point[1]]]),
   ];
 }
@@ -457,7 +458,10 @@ export function writeDxf(input) {
     throw new TypeError('DXF geometries must be an array');
   }
 
-  const layers = uniqueLayers(input.layers);
+  const layers = uniqueLayers([
+    ...input.layers,
+    ...input.geometries.map(item => item.layer).filter(layer => typeof layer === 'string'),
+  ]);
   const graph = allocateDocumentGraph(layers, input.geometries.length);
   const chunks = [];
   writeHeader(chunks, graph);

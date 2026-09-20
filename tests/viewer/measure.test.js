@@ -22,6 +22,15 @@ describe('pointToGeometryDistance', () => {
       .toBeCloseTo(2, 9);
   });
 
+  it('measures to the closing edge of a closed polyline', () => {
+    const closed = {
+      type: 'polyline',
+      closed: true,
+      points: [[0, 0], [10, 0], [10, 10], [0, 10]],
+    };
+    expect(pointToGeometryDistance([-2, 5], closed)).toBeCloseTo(2, 9);
+  });
+
   it('measures a circle from outside and from inside', () => {
     expect(pointToGeometryDistance([10, 0], circle([0, 0], 4))).toBeCloseTo(6, 9);
     expect(pointToGeometryDistance([1, 0], circle([0, 0], 4))).toBeCloseTo(3, 9);

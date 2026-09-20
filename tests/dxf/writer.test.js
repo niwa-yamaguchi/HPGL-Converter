@@ -288,6 +288,22 @@ describe('writeDxf entities', () => {
     expect(textTags.at(-1)).toEqual([100, 'AcDbText']);
   });
 
+  it('writes a closed LWPOLYLINE and declares its derived layer', () => {
+    const dxf = joined({
+      layers: ['board'],
+      geometries: [{
+        type: 'polyline', layer: 'board_UNKNOWN_T01', closed: true,
+        points: [[0, 0], [2, 0], [2, 1]],
+      }],
+    });
+    expect(dxf).toContain('0\nLWPOLYLINE\n');
+    expect(dxf).toContain('70\n1\n');
+    expect(dxf).toContain('2\nboard_UNKNOWN_T01\n');
+
+    const polyline = records(sectionTags(parseDxfTags(dxf), 'ENTITIES'))[0];
+    expect(recordValues(polyline, 70)).toEqual(['1']);
+  });
+
   it('swaps negative-sweep arc angles before normalization', () => {
     const text = joined({
       layers: ['clockwise'],

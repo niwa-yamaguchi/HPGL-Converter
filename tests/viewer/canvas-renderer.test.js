@@ -8,6 +8,7 @@ const fakeCanvas = (width, height) => {
     beginPath: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
+    closePath: vi.fn(),
     arc: vi.fn(),
     stroke: vi.fn(),
     save: vi.fn(),
@@ -79,6 +80,32 @@ describe('canvas renderer', () => {
     expect(context.arc).toHaveBeenNthCalledWith(
       2, 200, 120, 20, -100 * Math.PI / 180, -10 * Math.PI / 180, false,
     );
+  });
+
+  it('closes a closed polyline back to the first point', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, [{
+      color: '#000000',
+      geometries: [{
+        type: 'polyline',
+        closed: true,
+        points: [[0, 0], [2, 0], [2, 1]],
+      }],
+    }], viewport, { devicePixelRatio: 1 });
+
+    expect(context.lineTo).toHaveBeenCalledWith(150, 170);
+    expect(context.closePath).toHaveBeenCalledOnce();
+  });
+
+  it('leaves an open polyline unclosed', () => {
+    const { canvas, context } = fakeCanvas(400, 240);
+    renderViewer(canvas, [{
+      color: '#000000',
+      geometries: [{ type: 'polyline', points: [[0, 0], [2, 0], [2, 1]] }],
+    }], viewport, { devicePixelRatio: 1 });
+
+    expect(context.lineTo).not.toHaveBeenCalledWith(150, 170);
+    expect(context.closePath).not.toHaveBeenCalled();
   });
 
   it('only prepares and clears the canvas when groups are empty', () => {
