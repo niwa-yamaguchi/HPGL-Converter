@@ -1,7 +1,8 @@
 import './styles.css';
 import {
+  classifyInputName,
   defaultOutputName,
-  isSupportedHpglName,
+  isSupportedInputName,
   isZipName,
 } from './files/file-policy.js';
 import { triggerDxfDownload } from './files/dxf-download.js';
@@ -18,7 +19,33 @@ import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-cl
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
 import { minimumDistance, pickGeometry } from './viewer/measure.js';
 
-const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99';
+const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99 / .gbr / .gtl / .gbl / .drl / .txt';
+const DRAWABLE_KINDS = new Set(['hpgl', 'gerber', 'excellon']);
+const AUXILIARY_KINDS = new Set(['gerber-list', 'drill-list']);
+const SOURCE_KINDS = new Set([
+  'hpgl', 'gerber', 'excellon', 'gerber-list', 'drill-list', 'zip', 'unsupported',
+]);
+
+function extensionRange(prefix, start, end, pad = 0) {
+  const values = [];
+  for (let value = start; value <= end; value += 1) {
+    const label = pad > 0 ? String(value).padStart(pad, '0') : String(value);
+    values.push(`.${prefix}${label}`);
+  }
+  return values;
+}
+
+const MANUFACTURING_ACCEPT = [
+  '.gbr', '.ger', '.pho', '.art', '.gtl', '.gbl', '.gts', '.gbs',
+  '.gto', '.gbo', '.gtp', '.gbp', '.gm1',
+  ...extensionRange('g', 1, 99),
+  ...extensionRange('g', 1, 9, 2),
+  '.drl', '.xnc',
+  ...extensionRange('dr', 1, 99),
+  ...extensionRange('dr', 1, 9, 2),
+  '.txt',
+].join(',');
+
 const MEASURE_HINT = '図形をクリックすると2つの図形の最小距離を表示します。';
 const MEASURE_FAILURE = '距離を計算できませんでした。';
 const MAX_VISIBLE_DIAGNOSTICS = 100;
@@ -88,8 +115,8 @@ export function mountApp(root, deps = {}) {
       <header class="hero">
         <div>
           <p class="eyebrow">LOCAL ENGINEERING UTILITY</p>
-          <h1>HPGL <span aria-hidden="true">→</span> DXF Converter</h1>
-          <p class="hero-copy">複数のHPGL図面を、ファイルごとのレイヤーを持つ1つのDXFへ変換します。</p>
+          <h1>HPGL／Gerber／Excellon <span aria-hidden="true">→</span> DXF Converter</h1>
+          <p class="hero-copy">複数のHPGL／Gerber／Excellon図面を、ファイルごとのレイヤーを持つ1つのDXFへ変換します。</p>
         </div>
         <div class="privacy-card">
           <strong>ファイルは外部へ送信されません</strong>
@@ -108,11 +135,11 @@ export function mountApp(root, deps = {}) {
           <span class="file-count" data-testid="file-count">0 ファイル</span>
         </div>
 
-        <input data-testid="file-input" type="file" multiple hidden aria-label="HPGLまたはZIPファイルを選択"
-          accept=".hpgl,.hpg,.hgl,.plt,.plt1,.plt2,.plt3,.plt4,.plt5,.plt6,.plt7,.plt8,.plt9,.plt10,.plt11,.plt12,.plt13,.plt14,.plt15,.plt16,.plt17,.plt18,.plt19,.plt20,.plt21,.plt22,.plt23,.plt24,.plt25,.plt26,.plt27,.plt28,.plt29,.plt30,.plt31,.plt32,.plt33,.plt34,.plt35,.plt36,.plt37,.plt38,.plt39,.plt40,.plt41,.plt42,.plt43,.plt44,.plt45,.plt46,.plt47,.plt48,.plt49,.plt50,.plt51,.plt52,.plt53,.plt54,.plt55,.plt56,.plt57,.plt58,.plt59,.plt60,.plt61,.plt62,.plt63,.plt64,.plt65,.plt66,.plt67,.plt68,.plt69,.plt70,.plt71,.plt72,.plt73,.plt74,.plt75,.plt76,.plt77,.plt78,.plt79,.plt80,.plt81,.plt82,.plt83,.plt84,.plt85,.plt86,.plt87,.plt88,.plt89,.plt90,.plt91,.plt92,.plt93,.plt94,.plt95,.plt96,.plt97,.plt98,.plt99,.pltl,.pltl1,.pltl2,.pltl3,.pltl4,.pltl5,.pltl6,.pltl7,.pltl8,.pltl9,.pltl10,.pltl11,.pltl12,.pltl13,.pltl14,.pltl15,.pltl16,.pltl17,.pltl18,.pltl19,.pltl20,.pltl21,.pltl22,.pltl23,.pltl24,.pltl25,.pltl26,.pltl27,.pltl28,.pltl29,.pltl30,.pltl31,.pltl32,.pltl33,.pltl34,.pltl35,.pltl36,.pltl37,.pltl38,.pltl39,.pltl40,.pltl41,.pltl42,.pltl43,.pltl44,.pltl45,.pltl46,.pltl47,.pltl48,.pltl49,.pltl50,.pltl51,.pltl52,.pltl53,.pltl54,.pltl55,.pltl56,.pltl57,.pltl58,.pltl59,.pltl60,.pltl61,.pltl62,.pltl63,.pltl64,.pltl65,.pltl66,.pltl67,.pltl68,.pltl69,.pltl70,.pltl71,.pltl72,.pltl73,.pltl74,.pltl75,.pltl76,.pltl77,.pltl78,.pltl79,.pltl80,.pltl81,.pltl82,.pltl83,.pltl84,.pltl85,.pltl86,.pltl87,.pltl88,.pltl89,.pltl90,.pltl91,.pltl92,.pltl93,.pltl94,.pltl95,.pltl96,.pltl97,.pltl98,.pltl99,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99,.zip">
+        <input data-testid="file-input" type="file" multiple hidden aria-label="HPGL／Gerber／ExcellonまたはZIPファイルを選択"
+          accept=".hpgl,.hpg,.hgl,.plt,.plt1,.plt2,.plt3,.plt4,.plt5,.plt6,.plt7,.plt8,.plt9,.plt10,.plt11,.plt12,.plt13,.plt14,.plt15,.plt16,.plt17,.plt18,.plt19,.plt20,.plt21,.plt22,.plt23,.plt24,.plt25,.plt26,.plt27,.plt28,.plt29,.plt30,.plt31,.plt32,.plt33,.plt34,.plt35,.plt36,.plt37,.plt38,.plt39,.plt40,.plt41,.plt42,.plt43,.plt44,.plt45,.plt46,.plt47,.plt48,.plt49,.plt50,.plt51,.plt52,.plt53,.plt54,.plt55,.plt56,.plt57,.plt58,.plt59,.plt60,.plt61,.plt62,.plt63,.plt64,.plt65,.plt66,.plt67,.plt68,.plt69,.plt70,.plt71,.plt72,.plt73,.plt74,.plt75,.plt76,.plt77,.plt78,.plt79,.plt80,.plt81,.plt82,.plt83,.plt84,.plt85,.plt86,.plt87,.plt88,.plt89,.plt90,.plt91,.plt92,.plt93,.plt94,.plt95,.plt96,.plt97,.plt98,.plt99,.pltl,.pltl1,.pltl2,.pltl3,.pltl4,.pltl5,.pltl6,.pltl7,.pltl8,.pltl9,.pltl10,.pltl11,.pltl12,.pltl13,.pltl14,.pltl15,.pltl16,.pltl17,.pltl18,.pltl19,.pltl20,.pltl21,.pltl22,.pltl23,.pltl24,.pltl25,.pltl26,.pltl27,.pltl28,.pltl29,.pltl30,.pltl31,.pltl32,.pltl33,.pltl34,.pltl35,.pltl36,.pltl37,.pltl38,.pltl39,.pltl40,.pltl41,.pltl42,.pltl43,.pltl44,.pltl45,.pltl46,.pltl47,.pltl48,.pltl49,.pltl50,.pltl51,.pltl52,.pltl53,.pltl54,.pltl55,.pltl56,.pltl57,.pltl58,.pltl59,.pltl60,.pltl61,.pltl62,.pltl63,.pltl64,.pltl65,.pltl66,.pltl67,.pltl68,.pltl69,.pltl70,.pltl71,.pltl72,.pltl73,.pltl74,.pltl75,.pltl76,.pltl77,.pltl78,.pltl79,.pltl80,.pltl81,.pltl82,.pltl83,.pltl84,.pltl85,.pltl86,.pltl87,.pltl88,.pltl89,.pltl90,.pltl91,.pltl92,.pltl93,.pltl94,.pltl95,.pltl96,.pltl97,.pltl98,.pltl99,.h01,.h02,.h03,.h04,.h05,.h06,.h07,.h08,.h09,.h10,.h11,.h12,.h13,.h14,.h15,.h16,.h17,.h18,.h19,.h20,.h21,.h22,.h23,.h24,.h25,.h26,.h27,.h28,.h29,.h30,.h31,.h32,.h33,.h34,.h35,.h36,.h37,.h38,.h39,.h40,.h41,.h42,.h43,.h44,.h45,.h46,.h47,.h48,.h49,.h50,.h51,.h52,.h53,.h54,.h55,.h56,.h57,.h58,.h59,.h60,.h61,.h62,.h63,.h64,.h65,.h66,.h67,.h68,.h69,.h70,.h71,.h72,.h73,.h74,.h75,.h76,.h77,.h78,.h79,.h80,.h81,.h82,.h83,.h84,.h85,.h86,.h87,.h88,.h89,.h90,.h91,.h92,.h93,.h94,.h95,.h96,.h97,.h98,.h99,.zip,${MANUFACTURING_ACCEPT}">
         <button class="drop-zone" data-testid="drop-zone" type="button"
-          aria-label="HPGLまたはZIPファイルを追加" aria-describedby="drop-help">
-          <span class="drop-title" data-testid="drop-title">HPGLまたはZIPファイルをここへドロップ</span>
+          aria-label="HPGL／Gerber／ExcellonまたはZIPファイルを追加" aria-describedby="drop-help">
+          <span class="drop-title" data-testid="drop-title">HPGL／Gerber／ExcellonまたはZIPファイルをここへドロップ</span>
           <span id="drop-help" class="drop-help">または Enter / Space キーでファイル選択を開けます</span>
           <span class="drop-action" aria-hidden="true">ファイルを選択</span>
         </button>
@@ -147,7 +174,7 @@ export function mountApp(root, deps = {}) {
         <p class="viewer-measure" data-testid="viewer-measure" aria-live="polite"></p>
         <div class="viewer-controls" data-testid="viewer-controls"></div>
         <div class="viewer-stage">
-          <canvas data-testid="viewer-canvas" aria-label="HPGL図面プレビュー" tabindex="0"></canvas>
+          <canvas data-testid="viewer-canvas" aria-label="HPGL／Gerber／Excellon図面プレビュー" tabindex="0"></canvas>
           <p class="viewer-empty" data-testid="viewer-empty">表示できる図形がありません。</p>
         </div>
       </section>
@@ -163,8 +190,12 @@ export function mountApp(root, deps = {}) {
         </div>
         <div class="scale-note">
           <span>固定スケール</span>
-          <strong>40 HPGL単位 = 1 mm</strong>
+          <strong>HPGL: 40単位 = 1 mm／基板データ: ファイル指定単位</strong>
         </div>
+        <label class="setting-check">
+          <input data-testid="centerline-mode" type="checkbox">
+          <span>描画線を幅なしで出力</span>
+        </label>
       </section>
 
       <section class="panel action-panel" aria-labelledby="action-heading">
@@ -201,6 +232,7 @@ export function mountApp(root, deps = {}) {
     viewerEmpty: root.querySelector('[data-testid="viewer-empty"]'),
     viewerFit: root.querySelector('[data-testid="viewer-fit"]'),
     outputName: root.querySelector('[data-testid="output-name"]'),
+    centerlineMode: root.querySelector('[data-testid="centerline-mode"]'),
     convert: root.querySelector('[data-testid="convert-button"]'),
     cancel: root.querySelector('[data-testid="cancel-button"]'),
     progressWrap: root.querySelector('[data-testid="progress-wrap"]'),
@@ -218,6 +250,7 @@ export function mountApp(root, deps = {}) {
     importToken: null,
     outputNameSeeded: false,
     outputNameEdited: false,
+    strokeMode: 'outline',
     layerNames: [],
     progressByIndex: new Map(),
     progressIndex: 0,
@@ -251,6 +284,45 @@ export function mountApp(root, deps = {}) {
   function announce(message, kind = 'info') {
     nodes.status.textContent = message;
     nodes.status.dataset.kind = kind;
+  }
+
+  function inputKind(file) {
+    return file?.kind ?? classifyInputName(file?.name ?? '');
+  }
+
+  function isDrawableInput(file) {
+    return DRAWABLE_KINDS.has(inputKind(file));
+  }
+
+  function isAuxiliaryInput(file) {
+    return AUXILIARY_KINDS.has(inputKind(file));
+  }
+
+  function hasConvertibleInput() {
+    return state.files.some(isDrawableInput);
+  }
+
+  function matchingFileStats(files, file) {
+    if (!Array.isArray(files) || !file) {
+      return undefined;
+    }
+    const names = [file.name, file.path]
+      .filter(value => typeof value === 'string' && value.length > 0);
+    const leaves = names.map(name => name.split(/[\\/]/).pop());
+    return files.find(entry => {
+      const entryName = entry?.name;
+      if (typeof entryName !== 'string') {
+        return false;
+      }
+      if (names.includes(entryName)) {
+        return true;
+      }
+      return leaves.includes(entryName.split(/[\\/]/).pop());
+    });
+  }
+
+  function jobOptions(onProgress) {
+    return { onProgress, strokeMode: state.strokeMode };
   }
 
   function clearResult() {
@@ -561,7 +633,7 @@ export function mountApp(root, deps = {}) {
 
     let job;
     try {
-      job = createPreviewJob([...state.files], [...state.layerNames], { onProgress });
+      job = createPreviewJob([...state.files], [...state.layerNames], jobOptions(onProgress));
       if (!job || typeof job.cancel !== 'function' || !job.promise) {
         throw new TypeError('プレビュージョブを開始できませんでした');
       }
@@ -577,7 +649,8 @@ export function mountApp(root, deps = {}) {
   }
 
   function fileDisplay(index) {
-    const completed = state.result?.files?.[index];
+    const file = state.files[index];
+    const completed = matchingFileStats(state.result?.files, file);
     if (completed) {
       return {
         status: completed.errorCount > 0 ? 'エラーあり' : '完了',
@@ -587,7 +660,9 @@ export function mountApp(root, deps = {}) {
         warningCount: number(completed.warningCount),
       };
     }
-    const progress = state.progressByIndex.get(index);
+    const progress = (typeof file?.name === 'string' && state.progressByIndex.get(file.name))
+      || (typeof file?.path === 'string' && state.progressByIndex.get(file.path))
+      || state.progressByIndex.get(index);
     if (progress) {
       return {
         status: progress.errorCount > 0 ? 'エラーあり' : '完了',
@@ -600,7 +675,7 @@ export function mountApp(root, deps = {}) {
     if (state.converting && index === state.progressIndex) {
       return { status: '変換中', statusKind: 'working', geometryCount: 0, errorCount: 0, warningCount: 0 };
     }
-    const previewed = state.previewFiles[index];
+    const previewed = matchingFileStats(state.previewFiles, file);
     if (previewed) {
       return {
         status: previewed.errorCount > 0 ? 'エラーあり' : 'プレビュー済み',
@@ -646,7 +721,11 @@ export function mountApp(root, deps = {}) {
 
         const nameCell = element('td', 'file-name', file.name);
         const sizeCell = element('td', '', formatFileSize(file.size));
-        const layerCell = element('td', 'layer-name', state.layerNames[index]);
+        const layerCell = element(
+          'td',
+          'layer-name',
+          isAuxiliaryInput(file) ? '補助' : state.layerNames[index],
+        );
         const statusCell = element('td');
         statusCell.append(element('span', `status-pill status-${display.statusKind}`, display.status));
         const geometryCell = element('td', 'numeric', String(display.geometryCount));
@@ -668,7 +747,8 @@ export function mountApp(root, deps = {}) {
     nodes.input.disabled = locked;
     nodes.dropZone.disabled = locked;
     nodes.outputName.disabled = state.converting;
-    nodes.convert.disabled = locked || state.files.length === 0;
+    nodes.centerlineMode.disabled = locked;
+    nodes.convert.disabled = locked || !hasConvertibleInput();
     nodes.cancel.hidden = !state.converting;
   }
 
@@ -700,7 +780,7 @@ export function mountApp(root, deps = {}) {
     for (const source of results) {
       if (source === null || typeof source !== 'object'
           || typeof source.sourceName !== 'string' || source.sourceName.length === 0
-          || !['hpgl', 'zip', 'unsupported'].includes(source.kind)
+          || !SOURCE_KINDS.has(source.kind)
           || !Array.isArray(source.items)
           || (source.error !== null && !(source.error instanceof Error))
           || source.ignored === null || typeof source.ignored !== 'object') {
@@ -875,7 +955,7 @@ export function mountApp(root, deps = {}) {
       return;
     }
     mergeSourceResults(validateSourceResults(sources.map(source => {
-      if (!isSupportedHpglName(source.name)) {
+      if (!isSupportedInputName(source.name)) {
         return {
           sourceName: source.name,
           kind: 'unsupported',
@@ -891,7 +971,7 @@ export function mountApp(root, deps = {}) {
       }
       return {
         sourceName: source.name,
-        kind: 'hpgl',
+        kind: classifyInputName(source.name),
         items: [createNativeInputRecord(source)],
         ignored: {
           directories: 0,
@@ -1022,7 +1102,7 @@ export function mountApp(root, deps = {}) {
   }
 
   function startConversion() {
-    if (state.importing || state.converting || state.files.length === 0) {
+    if (state.importing || state.converting || !hasConvertibleInput()) {
       return;
     }
     clearResult();
@@ -1055,7 +1135,10 @@ export function mountApp(root, deps = {}) {
       }
       state.progressIndex = Math.min(index, state.files.length);
       if (index > 0) {
-        state.progressByIndex.set(index - 1, event);
+        const progressKey = typeof event.fileName === 'string' && event.fileName.length > 0
+          ? event.fileName
+          : index - 1;
+        state.progressByIndex.set(progressKey, event);
       }
       nodes.progress.max = total;
       nodes.progress.value = Math.min(index, total);
@@ -1065,7 +1148,7 @@ export function mountApp(root, deps = {}) {
 
     let job;
     try {
-      job = createConversionJob([...state.files], [...state.layerNames], { onProgress });
+      job = createConversionJob([...state.files], [...state.layerNames], jobOptions(onProgress));
       if (!job || typeof job.cancel !== 'function' || !job.promise) {
         throw new TypeError('変換ジョブを開始できませんでした');
       }
@@ -1103,6 +1186,14 @@ export function mountApp(root, deps = {}) {
   });
   listen(nodes.outputName, 'input', () => {
     state.outputNameEdited = true;
+  });
+  listen(nodes.centerlineMode, 'change', () => {
+    state.strokeMode = nodes.centerlineMode.checked ? 'centerline' : 'outline';
+    if (state.importing || state.converting) {
+      return;
+    }
+    clearResult();
+    startPreview();
   });
   listen(nodes.convert, 'click', startConversion);
   listen(nodes.viewerFit, 'click', fitPreview);

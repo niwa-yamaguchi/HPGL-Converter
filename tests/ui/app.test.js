@@ -235,17 +235,27 @@ describe('mountApp', () => {
   it('shows the private local workflow with one native file-picker tab stop', () => {
     mount({ createConversionJob: vi.fn() });
 
-    expect(document.body.textContent).toContain('HPGL → DXF Converter');
+    expect(document.body.textContent).toContain('HPGL／Gerber／Excellon');
+    expect(document.body.textContent).toContain('DXF Converter');
     expect(document.body.textContent).toContain('ファイルは外部へ送信されません');
     expect(document.body.textContent).toContain('.hpgl');
-    expect(document.body.textContent).toContain('40 HPGL単位 = 1 mm');
+    expect(document.body.textContent).toContain('HPGL: 40単位 = 1 mm／基板データ: ファイル指定単位');
+    expect(document.body.textContent).toContain('描画線を幅なしで出力');
     expect(document.querySelector('[aria-live="polite"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="progress"]').getAttribute('aria-label'))
       .toBe('変換進捗');
     expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(true);
 
     const input = document.querySelector('[data-testid="file-input"]');
-    expect(input.getAttribute('aria-label')).toBe('HPGLまたはZIPファイルを選択');
+    expect(input.getAttribute('aria-label')).toBe('HPGL／Gerber／ExcellonまたはZIPファイルを選択');
+    expect(input.accept).toContain('.gbr');
+    expect(input.accept).toContain('.drl');
+    expect(input.accept).toContain('.txt');
+    expect(document.querySelector('[data-testid="drop-zone"]').getAttribute('aria-label'))
+      .toContain('HPGL／Gerber／Excellon');
+    expect(document.querySelector('[data-testid="viewer-canvas"]').getAttribute('aria-label'))
+      .toContain('HPGL／Gerber／Excellon');
+    expect(document.querySelector('[data-testid="centerline-mode"]')).not.toBeNull();
     expect(input.hidden || input.tabIndex === -1).toBe(true);
     expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
     const click = vi.spyOn(input, 'click');
@@ -264,6 +274,98 @@ describe('mountApp', () => {
 
     zone.querySelector('[data-testid="drop-title"]').click();
     expect(click).toHaveBeenCalledOnce();
+  });
+
+  it('advertises HPGL, Gerber, and Excellon in the document metadata', async () => {
+    const html = await readFile(resolve(process.cwd(), 'index.html'), 'utf8');
+    expect(html).toContain('<title>HPGL／Gerber／Excellon → DXF Converter</title>');
+    expect(html).toMatch(/meta name="description"[^>]*HPGL／Gerber／Excellon/);
+  });
+
+  it('passes the global centerline setting to preview and conversion', async () => {
+    const createPreviewJob = vi.fn(() => ({
+      promise: Promise.resolve({ files: [] }),
+      cancel: vi.fn(),
+    }));
+    const createConversionJob = vi.fn(() => ({
+      promise: new Promise(() => {}),
+      cancel: vi.fn(),
+    }));
+    mount({ createPreviewJob, createConversionJob });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
+
+    const checkbox = document.querySelector('[data-testid="centerline-mode"]');
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(createPreviewJob).toHaveBeenLastCalledWith(
+      expect.any(Array), expect.any(Array),
+      expect.objectContaining({ strokeMode: 'centerline' }),
+    );
+    document.querySelector('[data-testid="convert-button"]').click();
+    expect(createConversionJob).toHaveBeenCalledWith(
+      expect.any(Array), expect.any(Array),
+      expect.objectContaining({ strokeMode: 'centerline' }),
+    );
+  });
+
+  it('disables convert for auxiliary-only input and labels those rows as auxiliary', () => {
+    mount({ createConversionJob: vi.fn() });
+    const input = document.querySelector('[data-testid="file-input"]');
+    expect(input.accept).toContain('.gbr');
+    expect(input.accept).toContain('.drl');
+    expect(input.accept).toContain('.txt');
+
+    setInputFiles(input, [hpglFile('P-00620-1_X-GBLIST.txt')]);
+    expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(1);
+    expect(document.querySelector('[data-testid="file-row"]').textContent)
+      .toContain('P-00620-1_X-GBLIST.txt');
+    expect(document.querySelector('[data-testid="file-row"]').textContent).toContain('補助');
+    expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(true);
+  });
+
+  it('keeps convert enabled when a drawable file is mixed with an auxiliary list', async () => {
+    const createPreviewJob = vi.fn(() => ({
+      promise: Promise.resolve({
+        files: [{
+          name: 'board.gbr',
+          layerName: 'board',
+          geometries: [line([[0, 0], [1, 1]])],
+          geometryCount: 5,
+          errorCount: 0,
+          warningCount: 0,
+          diagnostics: [],
+        }],
+      }),
+      cancel: vi.fn(),
+    }));
+    mount({ createConversionJob: vi.fn(), createPreviewJob });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('P-00620-1_DRLIST_M.txt'),
+      hpglFile('board.gbr', 'G04*', { lastModified: 456 }),
+    ]);
+
+    expect(createPreviewJob).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ name: 'P-00620-1_DRLIST_M.txt' }),
+        expect.objectContaining({ name: 'board.gbr' }),
+      ],
+      expect.any(Array),
+      expect.objectContaining({ onProgress: expect.any(Function), strokeMode: 'outline' }),
+    );
+    await vi.waitFor(() => {
+      const rows = [...document.querySelectorAll('[data-testid="file-row"]')];
+      const gerberRow = rows.find(row => row.textContent.includes('board.gbr'));
+      expect(gerberRow?.children[4].textContent).toBe('5');
+    });
+    const rows = [...document.querySelectorAll('[data-testid="file-row"]')];
+    const sidecarRow = rows.find(row => row.textContent.includes('DRLIST'));
+    expect(sidecarRow.textContent).toContain('補助');
+    expect(sidecarRow.children[4].textContent).toBe('0');
+    expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(false);
+    expect(document.querySelector('[data-testid="viewer-controls"]').textContent)
+      .toContain('board.gbr');
+    expect(document.querySelector('[data-testid="viewer-controls"]').textContent)
+      .not.toContain('DRLIST');
   });
 
   it('adds supported files while rejecting unsupported and duplicate files with a notice', () => {
