@@ -115,6 +115,21 @@ describe('parseGerber', () => {
     expect(bounds.maxX - bounds.minX).toBeCloseTo(1.5 * Math.SQRT2, 1);
     expect(bounds.maxY - bounds.minY).toBeCloseTo(1.5 * Math.SQRT2, 1);
   });
+
+  it('unions many sequential dark strokes without per-command hang', () => {
+    const commands = ['%FSLAX46Y46*%', '%MOMM*%', '%ADD10C,0.200000*%', 'D10*'];
+    for (let index = 0; index < 80; index += 1) {
+      const x = index * 300_000;
+      commands.push(`X${x}Y0D02*`, `X${x + 200000}Y0D01*`);
+    }
+    commands.push('M02*');
+    const started = Date.now();
+    const result = parseGerber(ascii(...commands), context, { strokeMode: 'outline' });
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(result.summary.errorCount).toBe(0);
+    const outlines = result.geometries.filter(item => item.type === 'polyline' && item.closed);
+    expect(outlines.length).toBeGreaterThan(0);
+  });
 });
 
 describe('plotGerber', () => {

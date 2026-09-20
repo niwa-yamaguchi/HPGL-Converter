@@ -380,6 +380,8 @@ export function plotGerber(parsed, context, options = {}) {
   const geometries = [];
   const apertureCache = new Map();
   let artwork = [];
+  let pendingPolarity = null;
+  let pendingPaths = [];
   let usedCenterline = false;
   let usedFilled = false;
 
@@ -417,10 +419,21 @@ export function plotGerber(parsed, context, options = {}) {
     return definition;
   }
 
+  function flushPolarity() {
+    if (pendingPaths.length === 0) {
+      return;
+    }
+    artwork = applyPolarity(artwork, pendingPaths, pendingPolarity);
+    pendingPaths = [];
+    pendingPolarity = null;
+    enforceLimits(artwork, limits);
+  }
+
   try {
     for (const object of parsed.objects ?? []) {
       try {
         if (object.kind === 'draw' && strokeMode === 'centerline') {
+          flushPolarity();
           usedCenterline = true;
           geometries.push(drawToStroke(object, context));
           continue;
@@ -441,12 +454,16 @@ export function plotGerber(parsed, context, options = {}) {
         } else {
           continue;
         }
-        artwork = applyPolarity(artwork, paths, object.polarity);
-        enforceLimits(artwork, limits);
+        if (pendingPolarity != null && pendingPolarity !== object.polarity) {
+          flushPolarity();
+        }
+        pendingPolarity = object.polarity;
+        pendingPaths.push(...paths);
       } catch (error) {
         if (isFatalPlotError(error)) {
           throw error;
         }
+        flushPolarity();
         addDiagnostic({
           severity: 'error',
           fileName: context.fileName,
@@ -459,6 +476,7 @@ export function plotGerber(parsed, context, options = {}) {
       }
     }
 
+    flushPolarity();
     enforceLimits(artwork, limits);
     for (const path of artwork) {
       const points = clipperToPoints(path);
