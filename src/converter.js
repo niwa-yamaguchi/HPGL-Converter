@@ -163,7 +163,10 @@ function parseDrawable(input, drawable, strokeMode) {
   const context = { fileName: input.name, layerName };
   const kind = drawable?.kind ?? input.kind;
   if (kind === 'gerber') {
-    return parseGerber(input.data, context, { strokeMode });
+    return parseGerber(input.data, context, {
+      strokeMode,
+      defaults: drawable?.parseOptions?.defaults,
+    });
   }
   if (kind === 'excellon') {
     return parseExcellon(input.data, context, {

@@ -588,11 +588,11 @@ export function parseExcellon(data, context, options = {}) {
           incremental = false;
         } else if (code === 91) {
           incremental = true;
-        } else if (code === 0) {
+        } else if (code === 0 || code === 80) {
           commitXY();
           flushHole();
           rapid = true;
-        } else if (code === 5) {
+        } else if (code === 5 || code === 81) {
           rapid = false;
         }
         continue;

@@ -19,7 +19,7 @@ import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-cl
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
 import { minimumDistance, pickGeometry } from './viewer/measure.js';
 
-const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99 / .gbr / .gtl / .gbl / .drl / .txt';
+const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99 / .gbr / .gtl / .gbl / .gbs / .drl / .drs / .txt';
 const DRAWABLE_KINDS = new Set(['hpgl', 'gerber', 'excellon']);
 const AUXILIARY_KINDS = new Set(['gerber-list', 'drill-list']);
 const SOURCE_KINDS = new Set([
@@ -40,7 +40,7 @@ const MANUFACTURING_ACCEPT = [
   '.gto', '.gbo', '.gtp', '.gbp', '.gm1',
   ...extensionRange('g', 1, 99),
   ...extensionRange('g', 1, 9, 2),
-  '.drl', '.xnc',
+  '.drl', '.xnc', '.drs',
   ...extensionRange('dr', 1, 99),
   ...extensionRange('dr', 1, 9, 2),
   '.txt',

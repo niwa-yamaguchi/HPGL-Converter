@@ -515,4 +515,28 @@ describe('parseGerberObjects', () => {
       }),
     ]);
   });
+
+  it('plots RS-274D flashes using sidecar format and apertures', () => {
+    const result = parseGerberObjects(ascii(
+      '*G17*G90*G71*G75*G54D193*G01X0050000Y0250000D03*M00*',
+    ), context, {
+      defaults: {
+        units: 'mm',
+        integerDigits: 3,
+        fractionDigits: 4,
+        zeroSuppression: 'L',
+        apertures: new Map([
+          [193, {
+            kind: 'circle', code: 193, template: 'C', modifiers: [4.6], raw: 'ADD193C,4.6',
+          }],
+        ]),
+      },
+    });
+
+    expect(result.summary.errorCount).toBe(0);
+    expect(result.diagnostics.filter(item => item.severity === 'warning')).toEqual([]);
+    expect(result.objects).toEqual([
+      expect.objectContaining({ kind: 'flash', point: [5, 25], apertureCode: 193 }),
+    ]);
+  });
 });

@@ -381,4 +381,61 @@ describe('parseExcellon', () => {
       radius: 12.7,
     }));
   });
+
+  it('treats G81/G80 canned cycles as ordinary drill holes', () => {
+    const result = parseExcellon(ascii(
+      'T01',
+      'G81',
+      'X022670Y050864',
+      'G80',
+      'M02',
+    ), context, {
+      defaults: {
+        units: 'mm',
+        integerDigits: 3,
+        fractionDigits: 3,
+        zeroSuppression: 'L',
+        tools: new Map([[1, 0.3]]),
+      },
+    });
+
+    expect(result.summary.errorCount).toBe(0);
+    expect(result.geometries).toEqual([
+      expect.objectContaining({
+        type: 'circle',
+        center: [22.67, 50.864],
+        radius: 0.15,
+      }),
+    ]);
+  });
+
+  it('ignores origin-return coordinates after G80 until the next G81', () => {
+    const result = parseExcellon(ascii(
+      'T01',
+      'G81',
+      'X022670Y050864',
+      'G80',
+      'X000000Y000000',
+      'T02',
+      'G81',
+      'X054610Y045085',
+      'G80',
+      'X000000Y000000',
+      'M02',
+    ), context, {
+      defaults: {
+        units: 'mm',
+        integerDigits: 3,
+        fractionDigits: 3,
+        zeroSuppression: 'L',
+        tools: new Map([[1, 0.3], [2, 0.8]]),
+      },
+    });
+
+    expect(result.summary.errorCount).toBe(0);
+    expect(result.geometries).toEqual([
+      expect.objectContaining({ type: 'circle', center: [22.67, 50.864], radius: 0.15 }),
+      expect.objectContaining({ type: 'circle', center: [54.61, 45.085], radius: 0.4 }),
+    ]);
+  });
 });

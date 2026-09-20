@@ -32,6 +32,31 @@ describe('sidecar lists', () => {
     expect(drill.defaults.tools.get(2)).toBe(0.6);
   });
 
+  it('reads Magic CAD GBS layer names, 3.4 millimetre format, and circular apertures', () => {
+    const gerber = parseGerberList(loadFixture('P-00622-1.gbs'));
+    expect(gerber.boardName).toBe('P-00622-1');
+    expect(gerber.layers.get('P-00622-1.G01')).toBe('G01_Top');
+    expect(gerber.layers.get('P-00622-1.G06')).toBe('G06_Outline_A');
+    const top = gerber.fileDefaults.get('P-00622-1.G01');
+    expect(top).toMatchObject({
+      units: 'mm', integerDigits: 3, fractionDigits: 4, zeroSuppression: 'L',
+    });
+    expect(top.apertures.get(193)).toEqual(expect.objectContaining({
+      kind: 'circle', code: 193, modifiers: [4.6],
+    }));
+    expect(gerber.fileDefaults.get('P-00622-1.G06').apertures.get(11).modifiers[0]).toBe(0.1);
+  });
+
+  it('reads Magic CAD DRS millimetre 3.3 format and tool diameters', () => {
+    const drill = parseDrillList(loadFixture('P-00622-1.drs'));
+    expect(drill.fileName).toBe('P-00622-1.dr1');
+    expect(drill.defaults).toMatchObject({
+      units: 'mm', integerDigits: 3, fractionDigits: 3, zeroSuppression: null,
+    });
+    expect(drill.defaults.tools.get(1)).toBe(0.3);
+    expect(drill.defaults.tools.get(2)).toBe(0.8);
+  });
+
   it('treats Metric/mm. as millimetres and leaves unspecified zero suppression null', () => {
     const drill = parseDrillList([
       'Board Name  :  sample',

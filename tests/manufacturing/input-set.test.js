@@ -264,4 +264,32 @@ describe('prepareInputSet', () => {
 
     expect(drawable(result, 'other/board.dr1').parseOptions.defaults).toBeUndefined();
   });
+
+  it('reclassifies a Magic CAD GBS as a gerber list and applies per-file apertures', () => {
+    const gbs = loadSidecar('P-00622-1.gbs');
+    const rs274d = ascii('*G17*G90*G71*G75*G54D193*G01X0050000Y0250000D03*M00*');
+    const result = prepareInputSet([
+      record('gerber', 'P-00622-1.G01', rs274d),
+      record('gerber', 'P-00622-1.gbs', gbs),
+      record('drill-list', 'P-00622-1.drs', loadSidecar('P-00622-1.drs')),
+      record('excellon', 'P-00622-1.dr1', ascii('T01', 'G81', 'X022670Y050864', 'G80', 'M02')),
+    ]);
+
+    expect(result.auxiliaryFiles.map(item => item.name).sort()).toEqual([
+      'P-00622-1.drs', 'P-00622-1.gbs',
+    ]);
+    expect(result.drawableInputs.map(item => item.name).sort()).toEqual([
+      'P-00622-1.G01', 'P-00622-1.dr1',
+    ]);
+    const gerber = drawable(result, 'P-00622-1.G01');
+    expect(gerber.effectiveLayerName).toBe('G01_Top');
+    expect(gerber.parseOptions.defaults.apertures.get(193).modifiers[0]).toBe(4.6);
+    expect(gerber.parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 3, fractionDigits: 4,
+    });
+    expect(drawable(result, 'P-00622-1.dr1').parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 3, fractionDigits: 3,
+    });
+    expect(drawable(result, 'P-00622-1.dr1').parseOptions.defaults.tools.get(1)).toBe(0.3);
+  });
 });

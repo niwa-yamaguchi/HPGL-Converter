@@ -133,7 +133,34 @@ function parseAttributeBody(raw) {
   return { name, values };
 }
 
-export function parseGerberObjects(data, context) {
+function applyGerberDefaults(format, apertures, defaults) {
+  if (!defaults) {
+    return;
+  }
+  const integerDigits = defaults.integerDigits;
+  const fractionDigits = defaults.fractionDigits;
+  if (integerDigits != null && fractionDigits != null) {
+    const suppression = defaults.zeroSuppression === 'T' ? 'T' : 'L';
+    format.applyFs(
+      `FS${suppression}AX${integerDigits}${fractionDigits}Y${integerDigits}${fractionDigits}`,
+    );
+  }
+  if (defaults.units === 'inch') {
+    format.applyMo('MOIN');
+  } else if (defaults.units === 'mm') {
+    format.applyMo('MOMM');
+  }
+  if (defaults.apertures instanceof Map) {
+    for (const [code, definition] of defaults.apertures) {
+      apertures.set(code, {
+        ...definition,
+        units: definition.units ?? defaults.units ?? null,
+      });
+    }
+  }
+}
+
+export function parseGerberObjects(data, context, options = {}) {
   const tokenized = tokenizeGerber(data);
   const diagnostics = [];
   let errorCount = 0;
@@ -148,6 +175,7 @@ export function parseGerberObjects(data, context) {
     imageName: undefined,
   };
   const format = createGerberCoordinateFormat();
+  applyGerberDefaults(format, apertures, options.defaults);
   const state = {
     interpolation: 'linear',
     polarity: 'dark',
@@ -264,7 +292,15 @@ export function parseGerberObjects(data, context) {
       endRegion();
       return null;
     }
-    if (code === 75 || code === 54) {
+    if (code === 75 || code === 54 || code === 17 || code === 90) {
+      return null;
+    }
+    if (code === 70) {
+      format.applyMo('MOIN');
+      return null;
+    }
+    if (code === 71) {
+      format.applyMo('MOMM');
       return null;
     }
     addDiagnostic(diagnostic(

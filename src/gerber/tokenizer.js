@@ -152,6 +152,11 @@ export function tokenizeGerber(data) {
       continue;
     }
 
+    if (byte === STAR) {
+      cursor += 1;
+      continue;
+    }
+
     if (!isAlpha(byte)) {
       diagnostics.push(invalidStartDiagnostic(cursor));
       cursor = skipInvalid(data, cursor);

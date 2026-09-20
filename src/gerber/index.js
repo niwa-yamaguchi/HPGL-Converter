@@ -6,7 +6,7 @@ export { parseGerberObjects } from './parser.js';
 export { plotGerber, DEFAULT_LIMITS } from './plotter.js';
 
 export function parseGerber(data, context, options = {}) {
-  const parsed = parseGerberObjects(data, context);
+  const parsed = parseGerberObjects(data, context, options);
   const plotted = plotGerber(parsed, context, options);
   return {
     geometries: plotted.geometries,

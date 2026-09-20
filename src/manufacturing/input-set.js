@@ -1,5 +1,5 @@
 import { parseGerber, parseGerberObjects } from '../gerber/index.js';
-import { parseDrillList, parseGerberList } from './sidecars.js';
+import { parseDrillList, parseGerberList, looksLikeGerberSummary } from './sidecars.js';
 
 const INVALID_LAYER_CHARS = /[<>/\\":;?*|=,]/g;
 
@@ -230,6 +230,15 @@ function associateGerber(sidecarInput, parsed, drawables, diagnostics) {
     }
     if (named.target) {
       named.target.effectiveLayerName = label;
+      const fileDefault = parsed.fileDefaults?.get(listedName);
+      if (fileDefault) {
+        named.target.parseOptions = {
+          defaults: {
+            ...(named.target.parseOptions.defaults ?? {}),
+            ...fileDefault,
+          },
+        };
+      }
     }
   }
 }
@@ -552,7 +561,12 @@ export function prepareInputSet(inputs = [], _options = {}) {
   const gerberLists = [];
 
   for (const input of inputs) {
-    if (input.kind === 'gerber-list' || input.kind === 'drill-list') {
+    let kind = input.kind;
+    if (kind === 'gerber' && looksLikeGerberSummary(input.data)) {
+      kind = 'gerber-list';
+      input.kind = 'gerber-list';
+    }
+    if (kind === 'gerber-list' || kind === 'drill-list') {
       auxiliaryFiles.push({ ...input });
       try {
         if (input.kind === 'drill-list') {

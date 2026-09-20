@@ -68,4 +68,10 @@ describe('tokenizeGerber', () => {
       }),
     ]);
   });
+
+  it('skips a leading empty asterisk without warning', () => {
+    const result = tokenizeGerber(ascii('*G17*G90*'));
+    expect(result.tokens.map(token => token.raw)).toEqual(['G17', 'G90']);
+    expect(result.diagnostics).toEqual([]);
+  });
 });
