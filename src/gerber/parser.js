@@ -1,3 +1,4 @@
+import { parseApertureDefinition } from './apertures.js';
 import { createGerberCoordinateFormat } from './coordinates.js';
 import { tokenizeGerber } from './tokenizer.js';
 
@@ -121,19 +122,6 @@ function parseStandardFields(raw) {
   }
 
   return fields;
-}
-
-function parseModifiers(body) {
-  if (!body) {
-    return [];
-  }
-  return body.split(/x/i).map((part, index) => {
-    const value = Number(part);
-    if (!Number.isFinite(value)) {
-      throw new RangeError(`AD modifier ${index + 1} must be finite`);
-    }
-    return value;
-  });
 }
 
 function parseAttributeBody(raw) {
@@ -371,21 +359,18 @@ export function parseGerberObjects(data, context) {
   }
 
   function handleAd(token) {
-    const match = /^ADD(\d+)([A-Za-z][A-Za-z0-9_+-]*),?(.*)$/i.exec(token.raw);
-    if (!match) {
-      throw new RangeError('Invalid AD command');
+    const definition = parseApertureDefinition(token.raw, macros);
+    definition.offset = token.offset;
+    if (format.snapshot().units === 'inch') {
+      definition.modifiers = definition.modifiers.map((value, index) => {
+        const millimetres = value * 25.4;
+        if (!Number.isFinite(millimetres)) {
+          throw new RangeError(`AD modifier ${index + 1} must be finite`);
+        }
+        return millimetres;
+      });
     }
-    const code = Number(match[1]);
-    if (code < 10) {
-      throw new RangeError('Aperture codes must be 10 or greater');
-    }
-    apertures.set(code, {
-      code,
-      template: match[2],
-      modifiers: parseModifiers(match[3]),
-      raw: token.raw,
-      offset: token.offset,
-    });
+    apertures.set(definition.code, definition);
   }
 
   function handleAm(token) {

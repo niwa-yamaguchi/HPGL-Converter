@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { instantiateAperture } from '../../src/gerber/apertures.js';
 import { parseGerberObjects } from '../../src/gerber/parser.js';
 
 const ascii = (...lines) => new TextEncoder().encode(lines.join('\n'));
@@ -296,6 +297,28 @@ describe('parseGerberObjects', () => {
     expect(result.objects).toEqual([
       expect.objectContaining({ kind: 'flash', apertureCode: 11 }),
     ]);
+    expect(result.apertures.get(10).kind).toBe('macro');
+    expect(result.apertures.get(11).kind).toBe('circle');
+    const paths = instantiateAperture(result.apertures.get(11), { chordToleranceMm: 0.01 });
+    expect(paths).toHaveLength(1);
+    expect(paths[0].exposure).toBe('dark');
+    expect(paths[0].path.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('converts inch AD modifiers to millimetres when storing aperture definitions', () => {
+    const result = parseGerberObjects(ascii(
+      '%FSLAX26Y26*%',
+      '%MOIN*%',
+      '%ADD10C,0.1*%',
+      'D10*',
+      'X0Y0D03*',
+      'M02*',
+    ), context);
+
+    expect(result.apertures.get(10).modifiers[0]).toBeCloseTo(2.54);
+    const paths = instantiateAperture(result.apertures.get(10), { chordToleranceMm: 0.01 });
+    expect(Math.max(...paths[0].path.map(point => Math.hypot(point.x, point.y))))
+      .toBeCloseTo(1.27, 5);
   });
 
   it('keeps previous state and records a diagnostic when a command fails', () => {
