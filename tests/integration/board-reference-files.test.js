@@ -192,12 +192,21 @@ for (const board of BOARDS) {
     const inputs = await collectManufacturingInputs(directory);
     const outline = await convertInputs(inputs, () => {}, { strokeMode: 'outline' });
     const centerline = await convertInputs(inputs, () => {}, { strokeMode: 'centerline' });
-    const outlineGeometries = geometriesFromDxf(decode(outline.buffer));
+    const outlineDxf = decode(outline.buffer);
+    const outlineGeometries = geometriesFromDxf(outlineDxf);
+    const outlineEntities = records(sectionTags(parseDxfTags(outlineDxf), 'ENTITIES'));
     const centerlineGeometries = geometriesFromDxf(decode(centerline.buffer));
     const outlineLineArc = countTypes(outlineGeometries, new Set(['line', 'arc']));
     const centerlineLineArc = countTypes(centerlineGeometries, new Set(['line', 'arc']));
     expect(outline.totals.errorCount).toBe(0);
     expect(centerline.totals.errorCount).toBe(0);
+    expect(() => validateRawDxfGraph(parseDxfTags(outlineDxf))).not.toThrow();
+    expect(outlineGeometries.some(geometry => (
+      geometry.type === 'polyline' && geometry.closed === true
+    ))).toBe(true);
+    expect(outlineEntities.some(record => (
+      record.type === 'LWPOLYLINE' && (Number(recordValues(record, 70)[0]) & 1) === 1
+    ))).toBe(true);
     expect(centerlineLineArc).toBeGreaterThan(outlineLineArc);
   }, OUTLINE_COMPARE_TIMEOUT_MS);
 }
