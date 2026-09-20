@@ -19,7 +19,7 @@ import { createPreviewJob as createDefaultPreviewJob } from './viewer/preview-cl
 import { createConversionJob as createDefaultConversionJob } from './worker/worker-client.js';
 import { minimumDistance, pickGeometry } from './viewer/measure.js';
 
-const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99 / .gbr / .gtl / .gbl / .gbs / .drl / .drs / .txt';
+const SUPPORTED_EXTENSIONS = '.hpgl / .hpg / .hgl / .plt / .plt1〜.plt99 / .pltl / .pltl1〜.pltl99 / .h01〜.h99 / .gbr / .gtl / .gbl / .gbs / .phot / .pho / .art / .phd / .gsi / .dat / .drl / .drs / .log / .txt';
 const DRAWABLE_KINDS = new Set(['hpgl', 'gerber', 'excellon']);
 const AUXILIARY_KINDS = new Set(['gerber-list', 'drill-list']);
 const SOURCE_KINDS = new Set([
@@ -36,8 +36,9 @@ function extensionRange(prefix, start, end, pad = 0) {
 }
 
 const MANUFACTURING_ACCEPT = [
-  '.gbr', '.ger', '.pho', '.art', '.gtl', '.gbl', '.gts', '.gbs',
-  '.gto', '.gbo', '.gtp', '.gbp', '.gm1',
+  '.gbr', '.ger', '.phot', '.pho', '.art', '.phd', '.gsi', '.dat', '.gbx',
+  '.gtl', '.gbl', '.gts', '.gbs',
+  '.gto', '.gbo', '.gtp', '.gbp', '.gko', '.gm1', '.log',
   ...extensionRange('g', 1, 99),
   ...extensionRange('g', 1, 9, 2),
   '.drl', '.xnc', '.drs',

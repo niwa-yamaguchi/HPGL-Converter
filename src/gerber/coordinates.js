@@ -1,4 +1,4 @@
-const FS_PATTERN = /^FS([LT])AX(\d)(\d)Y(\d)(\d)$/;
+const FS_PATTERN = /^FS([LT])A(?:G\d)?X(\d)(\d)Y(\d)(\d)(?:[DM]\d+)*$/;
 const MO_PATTERN = /^MO(MM|IN)$/;
 const SF_PATTERN = /^SFA([+-]?(?:\d+\.?\d*|\.\d+))B([+-]?(?:\d+\.?\d*|\.\d+))$/;
 const INCH_TO_MM = 25.4;

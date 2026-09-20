@@ -59,10 +59,15 @@ describe('isSupportedHpglName', () => {
 describe('classifyInputName', () => {
   it.each([
     ['board.gtl', 'gerber'], ['board.G09', 'gerber'], ['board.gbr', 'gerber'],
+    ['xx01.phot', 'gerber'], ['board.pho', 'gerber'], ['board.art', 'gerber'],
+    ['board.phd', 'gerber'], ['board.gsi', 'gerber'], ['board.dat', 'gerber'],
+    ['board.gko', 'gerber'], ['board.gbx', 'gerber'],
     ['board.drl', 'excellon'], ['board.dr1', 'excellon'],
     ['P-00620-1_X-GBLIST.txt', 'gerber-list'],
     ['P-00620-1_DRLIST_M.txt', 'drill-list'],
     ['P-00622-1.drs', 'drill-list'],
+    ['gb.log', 'gerber-list'],
+    ['drl.log', 'drill-list'],
     ['drawing.H01', 'hpgl'], ['bundle.zip', 'zip'], ['board.pdf', 'unsupported'],
   ])('classifies %s as %s', (name, expected) => {
     expect(classifyInputName(name)).toBe(expected);

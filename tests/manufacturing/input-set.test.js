@@ -292,4 +292,28 @@ describe('prepareInputSet', () => {
     });
     expect(drawable(result, 'P-00622-1.dr1').parseOptions.defaults.tools.get(1)).toBe(0.3);
   });
+
+  it('applies a Zuken CR-5000 drill log to the recorded Excellon file', () => {
+    const log = [
+      'OUTPUT FILE:        /CAM/xx50.drl',
+      'UNIT:               MM',
+      'FORMAT:             3,3,3,3',
+      'ZERO SUPP:          LEADING',
+      'LOGICAL  PHYSICAL  USED   SIZE',
+      '  1        1           63   0.400',
+      'TOTAL HOLES         63',
+    ].join('\n');
+    const result = prepareInputSet([
+      record('gerber', 'xx01.phot', metricBoxGerber(10, 10)),
+      record('excellon', 'xx50.drl', headerlessDrill('X134200Y46450')),
+      record('drill-list', 'drl.log', log),
+      record('gerber-list', 'gb.log', 'GERBER:             EXTEND'),
+    ]);
+
+    expect(result.auxiliaryFiles.map(item => item.name).sort()).toEqual(['drl.log', 'gb.log']);
+    expect(drawable(result, 'xx50.drl').parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 3, fractionDigits: 3, zeroSuppression: 'L',
+    });
+    expect(drawable(result, 'xx50.drl').parseOptions.defaults.tools.get(1)).toBe(0.4);
+  });
 });

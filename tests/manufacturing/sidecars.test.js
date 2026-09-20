@@ -57,6 +57,27 @@ describe('sidecar lists', () => {
     expect(drill.defaults.tools.get(2)).toBe(0.8);
   });
 
+  it('reads Zuken CR-5000 drill log format, leading zeros, and tool diameters', () => {
+    const drill = parseDrillList([
+      'OUTPUT FILE:        /J=/DB/NIWADENKI/P-00562/CAM/xx50.drl',
+      'UNIT:               MM',
+      'FORMAT:             3,3,3,3',
+      'ZERO SUPP:          LEADING',
+      'LOGICAL  PHYSICAL  USED   SIZE',
+      '  1        1           63   0.400',
+      '  2        2          974   0.600',
+      ' 12       12            7   5.200',
+      'TOTAL HOLES         1547',
+    ].join('\n'));
+    expect(drill.fileName).toBe('xx50.drl');
+    expect(drill.defaults).toMatchObject({
+      units: 'mm', integerDigits: 3, fractionDigits: 3, zeroSuppression: 'L',
+    });
+    expect(drill.defaults.tools.get(1)).toBe(0.4);
+    expect(drill.defaults.tools.get(2)).toBe(0.6);
+    expect(drill.defaults.tools.get(12)).toBe(5.2);
+  });
+
   it('treats Metric/mm. as millimetres and leaves unspecified zero suppression null', () => {
     const drill = parseDrillList([
       'Board Name  :  sample',

@@ -17,7 +17,11 @@ function sidecarScore(text) {
   if (/出力ファイル名/.test(text)) score += 2;
   if (/処理ファイル名/.test(text)) score += 2;
   if (/ドリル出力/.test(text)) score += 2;
+  if (/ドリルデータ作成ログ/.test(text)) score += 3;
+  if (/フォトデータ作成ログ/.test(text)) score += 3;
   if (/座標フォーマット/.test(text)) score += 2;
+  if (/TOTAL HOLES/.test(text)) score += 1;
+  if (/LOGICAL\s+PHYSICAL/.test(text)) score += 1;
   if (/Board\s+Name/i.test(text)) score += 2;
   if (/File\s+Name\s*:/i.test(text)) score += 1;
   return score;
@@ -110,6 +114,11 @@ export function isMagicGerberSummary(text) {
 
 export function isMagicDrillSummary(text) {
   return /ドリル出力/.test(text) || /座標フォーマット整数/.test(text);
+}
+
+export function isZukenDrillLog(text) {
+  return /ドリルデータ作成ログ/.test(text)
+    || (/TOTAL HOLES/.test(text) && /LOGICAL\s+PHYSICAL/.test(text));
 }
 
 export function looksLikeGerberSummary(data) {
@@ -290,10 +299,47 @@ function parseMagicDrillList(text) {
   };
 }
 
+function parseZukenDrillList(text) {
+  const listed = text.match(/OUTPUT FILE:\s*(\S+)/i);
+  const unitsLine = text.match(/UNIT:\s*(\S+)/i);
+  const format = text.match(/FORMAT:\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  const suppression = text.match(/ZERO SUPP:\s*(\S+)/i);
+  const listedTools = [];
+  for (const line of text.split(/\r?\n/)) {
+    const tool = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+\.\d+)\s*$/);
+    if (!tool) {
+      continue;
+    }
+    listedTools.push([Number(tool[1]), Number(tool[4])]);
+  }
+  let zeroSuppression = null;
+  if (suppression && /LEAD/i.test(suppression[1])) {
+    zeroSuppression = 'L';
+  } else if (suppression && /TRAIL/i.test(suppression[1])) {
+    zeroSuppression = 'T';
+  }
+  const units = parseUnits(unitsLine?.[1] ?? '') ?? 'mm';
+  const scale = units === 'inch' ? 25.4 : 1;
+  return {
+    boardName: '',
+    fileName: listed ? leafFromPath(listed[1]) : '',
+    defaults: {
+      units,
+      integerDigits: format ? Number(format[1]) : null,
+      fractionDigits: format ? Number(format[2]) : null,
+      zeroSuppression,
+      tools: new Map(listedTools.map(([number, diameter]) => [number, diameter * scale])),
+    },
+  };
+}
+
 export function parseDrillList(data) {
   const text = decode(data);
   if (isMagicDrillSummary(text)) {
     return parseMagicDrillList(text);
+  }
+  if (isZukenDrillLog(text)) {
+    return parseZukenDrillList(text);
   }
   return parseEnglishDrillList(text);
 }

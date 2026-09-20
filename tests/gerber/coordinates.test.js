@@ -55,6 +55,14 @@ describe('createGerberCoordinateFormat', () => {
     expect(format.parseOffset({ i: '1000000', j: '1000000' })).toEqual([50.8, 12.7]);
   });
 
+  it('accepts Zuken extended FS with G2 and trailing D02/M02', () => {
+    const format = createGerberCoordinateFormat();
+    format.applyFs('FSLAG2X33Y33D2M2');
+    format.applyMo('MOMM');
+
+    expect(format.parsePoint({ x: '213360', y: '88900' })).toEqual([213.36, 88.9]);
+  });
+
   it('does not mutate the format after invalid FS or MO', () => {
     const format = createGerberCoordinateFormat();
     format.applyFs('FSLAX46Y46');

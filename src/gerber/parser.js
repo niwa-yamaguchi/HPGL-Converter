@@ -508,7 +508,7 @@ export function parseGerberObjects(data, context, options = {}) {
       handleAs(token);
       return;
     }
-    if (token.code === 'IN') {
+    if (token.code === 'IN' || token.code === 'LN') {
       handleIn(token);
       return;
     }

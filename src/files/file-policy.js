@@ -1,8 +1,8 @@
 const HPGL_PATTERN = /\.(?:hpgl|hpg|hgl|pltl?(?:[1-9]|[1-9]\d)?|h(?:0[1-9]|[1-9]\d))$/i;
-const GERBER_PATTERN = /\.(?:gbr|ger|pho|art|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gm1|g(?:0?[1-9]|[1-9]\d))$/i;
+const GERBER_PATTERN = /\.(?:gbr|ger|phot|pho|art|phd|gsi|dat|gbx|gtl|gbl|gts|gbs|gto|gbo|gtp|gbp|gko|gm1|g(?:0?[1-9]|[1-9]\d))$/i;
 const EXCELLON_PATTERN = /\.(?:drl|xnc|dr(?:0?[1-9]|[1-9]\d))$/i;
-const GERBER_LIST_PATTERN = /(?:^|[_-])X-GBLIST\.txt$/i;
-const DRILL_LIST_PATTERN = /(?:(?:^|[_-])DRLIST(?:_M)?\.txt|\.drs)$/i;
+const GERBER_LIST_PATTERN = /(?:(?:^|[_-])X-GBLIST\.txt|^gb\.log)$/i;
+const DRILL_LIST_PATTERN = /(?:(?:^|[_-])DRLIST(?:_M)?\.txt|\.drs$|^drl\.log)$/i;
 const ZIP_PATTERN = /\.zip$/i;
 
 export const isSupportedHpglName = name => HPGL_PATTERN.test(name);

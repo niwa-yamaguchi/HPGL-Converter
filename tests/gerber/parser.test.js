@@ -516,6 +516,23 @@ describe('parseGerberObjects', () => {
     ]);
   });
 
+  it('plots Zuken packed RS-274X flashes and ignores LN', () => {
+    const result = parseGerberObjects(ascii(
+      '*',
+      '%LNP-00562.pcpaDRAW1*LPD*MOMM*FSLAG2X33Y33D2M2*%',
+      '%ADD14C,  0.200*%',
+      'G54D14*',
+      'X213360Y88900D03*',
+      'M02*',
+    ), context);
+
+    expect(result.summary.errorCount).toBe(0);
+    expect(result.diagnostics.filter(item => item.severity === 'warning')).toEqual([]);
+    expect(result.objects).toEqual([
+      expect.objectContaining({ kind: 'flash', point: [213.36, 88.9], apertureCode: 14 }),
+    ]);
+  });
+
   it('plots RS-274D flashes using sidecar format and apertures', () => {
     const result = parseGerberObjects(ascii(
       '*G17*G90*G71*G75*G54D193*G01X0050000Y0250000D03*M00*',
