@@ -33,6 +33,30 @@ function snapshotTransform(transform) {
   };
 }
 
+function cloneSegment(segment) {
+  const copy = {
+    interpolation: segment.interpolation,
+    start: [...segment.start],
+    end: [...segment.end],
+  };
+  if (segment.centerOffset) {
+    copy.centerOffset = [...segment.centerOffset];
+  }
+  return copy;
+}
+
+function cloneContours(contours, currentContour) {
+  if (contours === null) {
+    return { contours: null, currentContour: null };
+  }
+  const cloned = contours.map(contour => contour.map(cloneSegment));
+  if (currentContour === null) {
+    return { contours: cloned, currentContour: null };
+  }
+  const index = contours.indexOf(currentContour);
+  return { contours: cloned, currentContour: index >= 0 ? cloned[index] : null };
+}
+
 function parseStandardFields(raw) {
   const fields = {
     gCodes: [],
@@ -256,6 +280,9 @@ export function parseGerberObjects(data, context) {
   }
 
   function interpolate(fields, token) {
+    if (!state.region) {
+      requireAperture();
+    }
     const start = [...state.position];
     const end = format.parsePoint(fields);
     const segment = {
@@ -282,7 +309,7 @@ export function parseGerberObjects(data, context) {
       interpolation: state.interpolation,
       start,
       end,
-      apertureCode: requireAperture(),
+      apertureCode: state.apertureCode,
       polarity: state.polarity,
       offset: token.offset,
       transform: currentTransform(),
@@ -302,11 +329,12 @@ export function parseGerberObjects(data, context) {
   }
 
   function flash(fields, token) {
+    requireAperture();
     const point = format.parsePoint(fields);
     objects.push({
       kind: 'flash',
       point,
-      apertureCode: requireAperture(),
+      apertureCode: state.apertureCode,
       polarity: state.polarity,
       offset: token.offset,
       transform: currentTransform(),
@@ -539,8 +567,8 @@ export function parseGerberObjects(data, context) {
       || fields.i !== undefined
       || fields.j !== undefined;
     if (operation !== undefined) {
-      state.functionCode = operation;
       handleOperation(operation, fields, token);
+      state.functionCode = operation;
       return;
     }
     if (hasCoordinates) {
@@ -551,10 +579,52 @@ export function parseGerberObjects(data, context) {
     }
   }
 
+  function snapshotCommand() {
+    const region = cloneContours(state.regionContours, state.currentContour);
+    return {
+      interpolation: state.interpolation,
+      polarity: state.polarity,
+      apertureCode: state.apertureCode,
+      functionCode: state.functionCode,
+      region: state.region,
+      regionContours: region.contours,
+      regionOffset: state.regionOffset,
+      currentContour: region.currentContour,
+      transform: snapshotTransform(state.transform),
+      collectingMacro: state.collectingMacro,
+      macroPrimitiveCount: state.collectingMacro ? state.collectingMacro.primitives.length : 0,
+      position: [...state.position],
+      ended: state.ended,
+      objectCount: objects.length,
+      format: format.snapshot(),
+    };
+  }
+
+  function restoreCommand(saved) {
+    state.interpolation = saved.interpolation;
+    state.polarity = saved.polarity;
+    state.apertureCode = saved.apertureCode;
+    state.functionCode = saved.functionCode;
+    state.region = saved.region;
+    state.regionContours = saved.regionContours;
+    state.regionOffset = saved.regionOffset;
+    state.currentContour = saved.currentContour;
+    state.transform = saved.transform;
+    state.collectingMacro = saved.collectingMacro;
+    if (saved.collectingMacro) {
+      saved.collectingMacro.primitives.length = saved.macroPrimitiveCount;
+    }
+    state.position = saved.position;
+    state.ended = saved.ended;
+    objects.length = saved.objectCount;
+    format.restore(saved.format);
+  }
+
   for (const token of tokenized.tokens) {
     if (state.ended) {
       break;
     }
+    const saved = snapshotCommand();
     try {
       if (token.kind === 'extended') {
         handleExtended(token);
@@ -562,7 +632,7 @@ export function parseGerberObjects(data, context) {
         handleStandard(token);
       }
     } catch (error) {
-      state.collectingMacro = null;
+      restoreCommand(saved);
       addDiagnostic(diagnostic(
         'error',
         token,
@@ -570,6 +640,19 @@ export function parseGerberObjects(data, context) {
         context.fileName,
       ));
     }
+  }
+
+  if (state.region) {
+    addDiagnostic({
+      severity: 'error',
+      fileName: context.fileName,
+      command: 'G36',
+      offset: state.regionOffset,
+      message: 'Unclosed G36 region',
+      skippedCommands: 1,
+      skippedShapes: 0,
+    });
+    endRegion();
   }
 
   return {

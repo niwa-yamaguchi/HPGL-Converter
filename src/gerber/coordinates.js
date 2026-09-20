@@ -163,11 +163,41 @@ export function createGerberCoordinateFormat() {
     return [i, j];
   }
 
+  function snapshot() {
+    return {
+      zeroSuppression,
+      xInteger,
+      xFraction,
+      yInteger,
+      yFraction,
+      units,
+      scaleX,
+      scaleY,
+      lastX,
+      lastY,
+    };
+  }
+
+  function restore(saved) {
+    zeroSuppression = saved.zeroSuppression;
+    xInteger = saved.xInteger;
+    xFraction = saved.xFraction;
+    yInteger = saved.yInteger;
+    yFraction = saved.yFraction;
+    units = saved.units;
+    scaleX = saved.scaleX;
+    scaleY = saved.scaleY;
+    lastX = saved.lastX;
+    lastY = saved.lastY;
+  }
+
   return {
     applyFs,
     applyMo,
     applySf,
     parsePoint,
     parseOffset,
+    snapshot,
+    restore,
   };
 }

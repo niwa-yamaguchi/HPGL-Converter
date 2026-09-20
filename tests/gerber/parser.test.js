@@ -320,4 +320,63 @@ describe('parseGerberObjects', () => {
     ]);
     expect(result.summary.errorCount).toBe(1);
   });
+
+  it('does not leak modal X or functionCode from a failed aperture-less draw', () => {
+    const result = parseGerberObjects(ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'X1000000Y2000000D02*',
+      'X3000000Y2000000D01*',
+      'D10*',
+      'Y0*',
+      'Y2000000D01*',
+      'M02*',
+    ), context);
+
+    expect(result.objects).toEqual([
+      expect.objectContaining({ kind: 'draw', start: [1, 0], end: [1, 2] }),
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        command: 'D01',
+        fileName: 'board.gbr',
+        skippedCommands: 1,
+      }),
+    ]);
+    expect(result.summary.errorCount).toBe(1);
+  });
+
+  it('emits an error for an unclosed G36 at end of file', () => {
+    const result = parseGerberObjects(ascii(
+      ...metricHeader,
+      'G36*',
+      'X0Y0D02*',
+      'X1000000Y0D01*',
+      'X1000000Y1000000D01*',
+      'X0Y1000000D01*',
+      'X0Y0D01*',
+    ), context);
+
+    expect(result.objects).toEqual([
+      expect.objectContaining({
+        kind: 'region',
+        contours: [[
+          expect.objectContaining({ interpolation: 'linear', start: [0, 0], end: [1, 0] }),
+          expect.objectContaining({ interpolation: 'linear', start: [1, 0], end: [1, 1] }),
+          expect.objectContaining({ interpolation: 'linear', start: [1, 1], end: [0, 1] }),
+          expect.objectContaining({ interpolation: 'linear', start: [0, 1], end: [0, 0] }),
+        ]],
+      }),
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        command: 'G36',
+        fileName: 'board.gbr',
+      }),
+    ]);
+    expect(result.summary.errorCount).toBe(1);
+  });
 });
