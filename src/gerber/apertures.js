@@ -580,7 +580,7 @@ function primitiveThermal(values, ctx) {
 }
 
 function isCommentPrimitive(raw) {
-  return raw === '0' || raw.startsWith('0,') || /^0[^0-9.$xX(+\-,]/.test(raw);
+  return /^0(?:$|[^0-9])/.test(raw);
 }
 
 function handleAssignment(raw, vars, offset) {

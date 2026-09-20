@@ -492,4 +492,27 @@ describe('parseGerberObjects', () => {
     ]);
     expect(result.summary.errorCount).toBe(1);
   });
+
+  it('treats G01 coordinates without a D-code as a move before D03', () => {
+    const result = parseGerberObjects(ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,1*%',
+      'G75*',
+      'D10*',
+      'G01X1000000Y2000000*',
+      'D03*',
+      'M02*',
+    ), context);
+
+    expect(result.diagnostics.some(diagnostic => (
+      diagnostic.message === 'No current interpolation operation'
+    ))).toBe(false);
+    expect(result.summary.errorCount).toBe(0);
+    expect(result.objects).toEqual([
+      expect.objectContaining({
+        kind: 'flash', point: [1, 2], apertureCode: 10,
+      }),
+    ]);
+  });
 });

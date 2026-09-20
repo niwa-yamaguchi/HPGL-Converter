@@ -559,10 +559,9 @@ export function parseGerberObjects(data, context) {
       return;
     }
     if (hasCoordinates) {
-      if (state.functionCode === null) {
-        throw new RangeError('No current interpolation operation');
-      }
-      handleOperation(state.functionCode, fields, token);
+      const operationCode = state.functionCode ?? 2;
+      handleOperation(operationCode, fields, token);
+      state.functionCode = operationCode;
     }
   }
 

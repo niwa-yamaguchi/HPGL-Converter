@@ -257,6 +257,19 @@ describe('instantiateAperture', () => {
     expect(hasPoint(path, 1, 0.5)).toBe(true);
   });
 
+  it('treats space-stripped 0$ AM comment lines as comments', () => {
+    const macros = macrosOf('RoundRect', [
+      '0$1Rounding radius',
+      '1,1,$1+$1,0,0',
+      '20,1,$1,0,0,$1+$1,0,0',
+    ]);
+
+    expect(() => instantiate('ADD10RoundRect,0.2', macros)).not.toThrow(/R/);
+    const paths = instantiate('ADD10RoundRect,0.2', macros);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(maxRadius(paths[0].path)).toBeCloseTo(0.2, 6);
+  });
+
   it('skips comment primitives and evaluates a KiCad-style roundrect macro', () => {
     const macros = macrosOf('RoundRect', [
       '0 Box with rounded corners',
