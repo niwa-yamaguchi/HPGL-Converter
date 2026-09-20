@@ -69,9 +69,61 @@ function namesEqual(left, right) {
   return String(left).toLowerCase() === String(right).toLowerCase();
 }
 
-function diagnosticMatches(input, fileName) {
-  return [input.name, input.path, leafName(input.name), leafName(input.path)]
-    .some(value => namesEqual(value, fileName));
+function jobLeaf(job) {
+  return leafName(job.input.path || job.input.name);
+}
+
+function assignPreparedDiagnostics(jobs, diagnostics) {
+  const extras = jobs.map(() => []);
+  const leftover = [];
+  const cursor = new Map();
+
+  function takeNext(key, indexes) {
+    const next = cursor.get(key) ?? 0;
+    if (next >= indexes.length) {
+      return null;
+    }
+    cursor.set(key, next + 1);
+    return indexes[next];
+  }
+
+  for (const diagnostic of diagnostics) {
+    const fileName = diagnostic.fileName;
+    const pathHits = jobs
+      .map((job, index) => index)
+      .filter(index => namesEqual(jobs[index].input.path, fileName));
+    if (pathHits.length === 1) {
+      extras[pathHits[0]].push(diagnostic);
+      continue;
+    }
+    if (pathHits.length > 1) {
+      const index = takeNext(`path:${String(fileName).toLowerCase()}`, pathHits);
+      if (index != null) {
+        extras[index].push(diagnostic);
+        continue;
+      }
+      leftover.push(diagnostic);
+      continue;
+    }
+
+    const leafHits = jobs
+      .map((job, index) => index)
+      .filter(index => namesEqual(jobLeaf(jobs[index]), fileName));
+    if (leafHits.length === 1) {
+      extras[leafHits[0]].push(diagnostic);
+      continue;
+    }
+    if (leafHits.length > 1) {
+      const index = takeNext(`leaf:${String(fileName).toLowerCase()}`, leafHits);
+      if (index != null) {
+        extras[index].push(diagnostic);
+        continue;
+      }
+    }
+    leftover.push(diagnostic);
+  }
+
+  return { extras, leftover };
 }
 
 function resolveLayerName(input, fallback) {
@@ -108,21 +160,6 @@ function parseDrawable(input, drawable, strokeMode) {
     });
   }
   return parseHpgl(input.data, context);
-}
-
-function takeMatchingDiagnostics(pending, input) {
-  const matched = [];
-  const rest = [];
-  for (const diagnostic of pending) {
-    if (diagnosticMatches(input, diagnostic.fileName)) {
-      matched.push(diagnostic);
-    } else {
-      rest.push(diagnostic);
-    }
-  }
-  pending.length = 0;
-  pending.push(...rest);
-  return matched;
 }
 
 function withPreparedDiagnostics(file, extra) {
@@ -164,7 +201,6 @@ export function parseInputs(inputs, options = {}) {
   const normalized = inputs.map(normalizeInput);
   const prepared = prepareInputSet(normalized.filter(input => !isReadFailure(input)));
   const pendingDrawables = [...prepared.drawableInputs];
-  const pendingDiagnostics = [...prepared.diagnostics];
 
   const jobs = [];
   for (const input of normalized) {
@@ -178,6 +214,7 @@ export function parseInputs(inputs, options = {}) {
     jobs.push({ input, drawable: pendingDrawables.shift() ?? input });
   }
 
+  const assigned = assignPreparedDiagnostics(jobs, prepared.diagnostics);
   const layers = [];
   const geometries = [];
   const files = [];
@@ -210,10 +247,7 @@ export function parseInputs(inputs, options = {}) {
       converted = failedFileResult({ ...input, layerName }, error);
     }
 
-    converted.file = withPreparedDiagnostics(
-      converted.file,
-      takeMatchingDiagnostics(pendingDiagnostics, input),
-    );
+    converted.file = withPreparedDiagnostics(converted.file, assigned.extras[jobIndex]);
     geometries.push(...converted.geometries);
     files.push(converted.file);
     layers.push(converted.file.layerName);
@@ -229,7 +263,7 @@ export function parseInputs(inputs, options = {}) {
 
   let leftoverErrorCount = 0;
   let leftoverWarningCount = 0;
-  for (const diagnostic of pendingDiagnostics) {
+  for (const diagnostic of assigned.leftover) {
     if (diagnostic.severity === 'error') {
       leftoverErrorCount += 1;
     } else {

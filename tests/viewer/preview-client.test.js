@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
+import { convertInputs } from '../../src/converter.js';
 import { createPreviewJob } from '../../src/viewer/preview-client.js';
 import { handlePreviewMessage } from '../../src/viewer/preview.worker.js';
 import { handleConversionMessage } from '../../src/worker/converter.worker.js';
@@ -290,6 +291,49 @@ describe('preview worker protocol', () => {
     expect(preview.files.map(file => file.name)).toEqual([
       'drawing.H01', 'board.gtl', 'board.drl',
     ]);
+  });
+
+  it('keeps same-leaf preview geometries on their own files', async () => {
+    const left = new TextEncoder().encode('PD40,0;PU;');
+    const right = new TextEncoder().encode('PD0,40;PU;');
+    const files = [
+      {
+        name: 'drawing.H01',
+        path: 'left/drawing.H01',
+        blob: { async arrayBuffer() { return left.buffer; } },
+      },
+      {
+        name: 'drawing.H01',
+        path: 'right/drawing.H01',
+        blob: { async arrayBuffer() { return right.buffer; } },
+      },
+    ];
+    const layerNames = ['left', 'right'];
+    const posted = [];
+    await handlePreviewMessage({
+      type: 'preview', requestId: 'same-leaf', files, layerNames,
+    }, message => posted.push(message));
+    const converted = await convertInputs([
+      { name: 'drawing.H01', path: 'left/drawing.H01', layerName: 'left', data: left },
+      { name: 'drawing.H01', path: 'right/drawing.H01', layerName: 'right', data: right },
+    ], () => {});
+    const preview = posted.find(message => message.type === 'complete').result;
+
+    expect(preview.files.map(file => ({
+      name: file.name,
+      geometryCount: file.geometryCount,
+      errorCount: file.errorCount,
+      warningCount: file.warningCount,
+    }))).toEqual(converted.files.map(file => ({
+      name: file.name,
+      geometryCount: file.geometryCount,
+      errorCount: file.errorCount,
+      warningCount: file.warningCount,
+    })));
+    expect(preview.files[0].geometries).toHaveLength(converted.files[0].geometryCount);
+    expect(preview.files[1].geometries).toHaveLength(converted.files[1].geometryCount);
+    expect(preview.files[0].geometries.every(geometry => geometry.layer === 'left')).toBe(true);
+    expect(preview.files[1].geometries.every(geometry => geometry.layer === 'right')).toBe(true);
   });
 
   it('uses an inline worker and contains no network API calls', async () => {

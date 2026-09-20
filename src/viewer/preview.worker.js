@@ -81,10 +81,12 @@ export async function handlePreviewMessage(message, post) {
       strokeMode: message.options?.strokeMode ?? 'outline',
       onProgress: event => post({ type: 'progress', requestId, event }),
     });
-    const files = parsed.files.map(file => ({
-      ...file,
-      geometries: parsed.geometries.filter(geometry => geometry.fileName === file.name),
-    }));
+    let offset = 0;
+    const files = parsed.files.map(file => {
+      const geometries = parsed.geometries.slice(offset, offset + file.geometryCount);
+      offset += file.geometryCount;
+      return { ...file, geometries };
+    });
     post({ type: 'complete', requestId, result: { files } });
   } catch (error) {
     post({ type: 'error', requestId, message: safeMessage(error) });

@@ -338,4 +338,30 @@ describe('manufacturing conversion', () => {
       file.diagnostics.every(diagnostic => diagnostic.fileName !== 'P-00620-1_DRLIST_M.txt')
     ))).toBe(true);
   });
+
+  it('assigns each same-leaf Excellon format diagnostic to its own file', async () => {
+    const headerless = ascii('T01', 'X0Y0', 'M30');
+    const result = await convertInputs([
+      {
+        name: 'left/P-00620-1.dr1',
+        path: 'left/P-00620-1.dr1',
+        kind: 'excellon',
+        layerName: 'left',
+        data: headerless,
+      },
+      {
+        name: 'right/P-00620-1.dr1',
+        path: 'right/P-00620-1.dr1',
+        kind: 'excellon',
+        layerName: 'right',
+        data: headerless,
+      },
+    ], () => {});
+
+    const ambiguous = file => file.diagnostics.filter(
+      diagnostic => diagnostic.command === 'DRILL_FORMAT_AMBIGUOUS',
+    );
+    expect(ambiguous(result.files[0])).toHaveLength(1);
+    expect(ambiguous(result.files[1])).toHaveLength(1);
+  });
 });
