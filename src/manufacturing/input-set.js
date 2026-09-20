@@ -1,5 +1,7 @@
-import { parseGerber } from '../gerber/index.js';
+import { parseGerber, parseGerberObjects } from '../gerber/index.js';
 import { parseDrillList, parseGerberList } from './sidecars.js';
+
+const INVALID_LAYER_CHARS = /[<>/\\":;?*|=,]/g;
 
 const INCH_TO_MM = 25.4;
 const BOUNDS_PAD_MM = 2;
@@ -41,7 +43,51 @@ function namesEqual(left, right) {
 
 function defaultLayerName(input) {
   const leaf = leafName(input);
-  return leaf.replace(/\.[^.]+$/, '') || 'layer';
+  const base = input.kind === 'hpgl'
+    ? (leaf.replace(/\.[^.]+$/, '') || 'layer')
+    : (leaf.replace(/\./g, '_') || 'layer');
+  return base.replace(INVALID_LAYER_CHARS, '_') || 'layer';
+}
+
+function composeLayerName(parts) {
+  return parts.filter(Boolean).join('_').replace(/[^A-Za-z0-9_-]+/g, '_') || 'layer';
+}
+
+function shortLayerCode(input) {
+  const leaf = leafName(input);
+  const dot = leaf.lastIndexOf('.');
+  return dot >= 0 ? leaf.slice(dot + 1) : leaf;
+}
+
+function fileFunctionValues(attributes) {
+  const file = attributes?.file;
+  if (!file) {
+    return null;
+  }
+  const values = file['.FileFunction'] ?? file.FileFunction;
+  return Array.isArray(values) && values.length > 0 ? values : null;
+}
+
+function applyFileFunctionLayerName(drawable) {
+  if (drawable.kind !== 'gerber') {
+    return;
+  }
+  if (drawable.effectiveLayerName !== defaultLayerName(drawable)) {
+    return;
+  }
+  try {
+    const parsed = parseGerberObjects(drawable.data, {
+      fileName: leafName(drawable),
+      layerName: drawable.effectiveLayerName,
+    });
+    const values = fileFunctionValues(parsed.attributes);
+    if (!values) {
+      return;
+    }
+    drawable.effectiveLayerName = composeLayerName([shortLayerCode(drawable), ...values]);
+  } catch {
+    // Keep the default name when Gerber attributes cannot be read.
+  }
 }
 
 function diagnostic(severity, fileName, command, message) {
@@ -156,12 +202,11 @@ function associateExcellon(sidecarInput, parsed, drawables, diagnostics) {
   }
 
   const group = candidates.filter(item => dirName(item) === dirName(sidecarInput));
-  const pool = group.length > 0 ? group : candidates;
-  if (pool.length === 1) {
-    applyDefaults(pool[0], parsed.defaults);
+  if (group.length === 1) {
+    applyDefaults(group[0], parsed.defaults);
     return;
   }
-  if (pool.length > 1) {
+  if (group.length > 1) {
     diagnostics.push(diagnostic(
       'warning',
       leafName(sidecarInput),
@@ -539,6 +584,9 @@ export function prepareInputSet(inputs = [], _options = {}) {
   }
   for (const sidecar of gerberLists) {
     associateGerber(sidecar.input, sidecar.parsed, drawableInputs, diagnostics);
+  }
+  for (const drawable of drawableInputs) {
+    applyFileFunctionLayerName(drawable);
   }
 
   const boundsByDir = new Map();

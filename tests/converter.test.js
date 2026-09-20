@@ -298,6 +298,125 @@ describe('manufacturing conversion', () => {
     expect(result.files[0].layerName).toBe('drawing');
   });
 
+  it('uses GBLIST names when gerber job layerName is empty', async () => {
+    const listed = ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D03*',
+      'M02*',
+    );
+    const list = ascii('P-00620-1.G03  :  Symbol Mark      [Top Side]     :');
+    const result = parseInputs([
+      {
+        name: 'P-00620-1.G03',
+        path: 'P-00620-1.G03',
+        kind: 'gerber',
+        layerName: '',
+        data: listed,
+      },
+      {
+        name: 'P-00620-1_X-GBLIST.txt',
+        path: 'P-00620-1_X-GBLIST.txt',
+        kind: 'gerber-list',
+        layerName: '',
+        data: list,
+      },
+    ]);
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].layerName).toBe('G03_Symbol_Mark_Top');
+    expect(result.layers).toEqual(['G03_Symbol_Mark_Top']);
+  });
+
+  it('keeps distinguishing gerber extensions in default layer names', () => {
+    const flash = ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D03*',
+      'M02*',
+    );
+    const result = parseInputs([
+      { name: 'P-00620-1.G01', kind: 'gerber', layerName: '', data: flash },
+      { name: 'P-00620-1.G03', kind: 'gerber', layerName: '', data: flash },
+    ]);
+
+    expect(result.files[0].layerName).not.toBe(result.files[1].layerName);
+    expect(result.files[0].layerName).toMatch(/G01/i);
+    expect(result.files[1].layerName).toMatch(/G03/i);
+  });
+
+  it('composes FileFunction into the layer name when GBLIST did not rename', () => {
+    const result = parseInputs([{
+      name: 'board.gtl',
+      kind: 'gerber',
+      layerName: '',
+      data: ascii(
+        '%TF.FileFunction,Copper,L1,Top*%',
+        '%FSLAX46Y46*%',
+        '%MOMM*%',
+        '%ADD10C,0.200000*%',
+        'D10*',
+        'X0Y0D03*',
+        'M02*',
+      ),
+    }]);
+
+    expect(result.files[0].layerName).toMatch(/Copper/);
+    expect(result.files[0].layerName).toMatch(/L1/);
+    expect(result.files[0].layerName).toMatch(/Top/);
+    expect(result.files[0].layerName).not.toMatch(/[<>/\\":;?*|=,]/);
+  });
+
+  it('does not override a GBLIST layer name with FileFunction', () => {
+    const listed = ascii(
+      '%TF.FileFunction,Copper,L1,Top*%',
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D03*',
+      'M02*',
+    );
+    const result = parseInputs([
+      {
+        name: 'P-00620-1.G03',
+        kind: 'gerber',
+        layerName: '',
+        data: listed,
+      },
+      {
+        name: 'P-00620-1_X-GBLIST.txt',
+        kind: 'gerber-list',
+        layerName: '',
+        data: ascii('P-00620-1.G03  :  Symbol Mark      [Top Side]     :'),
+      },
+    ]);
+
+    expect(result.files[0].layerName).toBe('G03_Symbol_Mark_Top');
+  });
+
+  it('counts an ambiguous headerless drill format error once', () => {
+    const result = parseInputs([{
+      name: 'board.dr1',
+      kind: 'excellon',
+      layerName: '',
+      data: ascii('T01', 'X0Y0', 'X10000Y5000', 'M30'),
+    }]);
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].errorCount).toBe(1);
+    const formatErrors = result.files[0].diagnostics.filter(diagnostic => (
+      diagnostic.command === 'DRILL_FORMAT_AMBIGUOUS'
+      || /cannot be determined/i.test(diagnostic.message)
+    ));
+    expect(formatErrors).toHaveLength(1);
+    expect(formatErrors[0].command).toBe('DRILL_FORMAT_AMBIGUOUS');
+  });
+
   it('merges unmatched sidecar diagnostics into totals only', async () => {
     const result = await convertInputs([
       {

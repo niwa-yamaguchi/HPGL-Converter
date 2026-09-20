@@ -322,6 +322,12 @@ export function mountApp(root, deps = {}) {
     });
   }
 
+  function jobLayerNames() {
+    return state.files.map((file, index) => (
+      inputKind(file) === 'hpgl' ? state.layerNames[index] : ''
+    ));
+  }
+
   function jobOptions(onProgress) {
     return { onProgress, strokeMode: state.strokeMode };
   }
@@ -634,7 +640,7 @@ export function mountApp(root, deps = {}) {
 
     let job;
     try {
-      job = createPreviewJob([...state.files], [...state.layerNames], jobOptions(onProgress));
+      job = createPreviewJob([...state.files], jobLayerNames(), jobOptions(onProgress));
       if (!job || typeof job.cancel !== 'function' || !job.promise) {
         throw new TypeError('プレビュージョブを開始できませんでした');
       }
@@ -839,7 +845,7 @@ export function mountApp(root, deps = {}) {
       if (sourceAdded > 0 && outputNameSource === null) {
         outputNameSource = source.sourceName;
       } else if (source.kind === 'zip' && (source.items?.length ?? 0) === 0) {
-        notices.push(`${source.sourceName} に対応HPGLがありません`);
+        notices.push(`${source.sourceName} に対応ファイルがありません`);
       } else if (source.kind === 'unsupported') {
         notices.push(`${source.sourceName} は対応していない形式です`);
       }
@@ -1162,7 +1168,7 @@ export function mountApp(root, deps = {}) {
 
     let job;
     try {
-      job = createConversionJob([...state.files], [...state.layerNames], jobOptions(onProgress));
+      job = createConversionJob([...state.files], jobLayerNames(), jobOptions(onProgress));
       if (!job || typeof job.cancel !== 'function' || !job.promise) {
         throw new TypeError('変換ジョブを開始できませんでした');
       }

@@ -234,4 +234,34 @@ describe('prepareInputSet', () => {
 
     expect(result.diagnostics.some(item => item.command === 'DRILL_FORMAT_AMBIGUOUS')).toBe(false);
   });
+
+  it('keeps distinguishing extensions in default gerber layer names', () => {
+    const result = prepareInputSet([
+      record('gerber', 'P-00620-1.G01', metricBoxGerber(10, 10)),
+      record('gerber', 'P-00620-1.G03', metricBoxGerber(10, 10)),
+    ]);
+
+    const first = drawable(result, 'P-00620-1.G01').effectiveLayerName;
+    const second = drawable(result, 'P-00620-1.G03').effectiveLayerName;
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/G01/i);
+    expect(second).toMatch(/G03/i);
+  });
+
+  it('does not apply a unique DRLIST across directories', () => {
+    const sidecar = [
+      'Board Name  :  P-00620-1',
+      'Database Format     :  Integers 4 , Fractions 2',
+      'Units               :  mm',
+      'Zero Suppression    :  On',
+      'File Name   :  missing.dr1',
+      '     T01  |     0.400  :      Through  :       1  :',
+    ].join('\n');
+    const result = prepareInputSet([
+      record('excellon', 'board.dr1', headerlessDrill('X0Y0'), 'other/board.dr1'),
+      record('drill-list', 'P-00620-1_DRLIST_M.txt', sidecar, 'fab/P-00620-1_DRLIST_M.txt'),
+    ]);
+
+    expect(drawable(result, 'other/board.dr1').parseOptions.defaults).toBeUndefined();
+  });
 });

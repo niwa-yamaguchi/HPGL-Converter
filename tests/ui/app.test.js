@@ -282,6 +282,36 @@ describe('mountApp', () => {
     expect(html).toMatch(/meta name="description"[^>]*HPGL／Gerber／Excellon/);
   });
 
+  it('passes empty layer names for gerber, excellon, and sidecar jobs', () => {
+    const createPreviewJob = vi.fn(() => ({
+      promise: Promise.resolve({ files: [] }),
+      cancel: vi.fn(),
+    }));
+    const createConversionJob = vi.fn(() => ({
+      promise: new Promise(() => {}),
+      cancel: vi.fn(),
+    }));
+    mount({ createPreviewJob, createConversionJob });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('board.gtl'),
+      hpglFile('board.drl', 'M30', { lastModified: 456 }),
+      hpglFile('P-00620-1_X-GBLIST.txt', 'list', { lastModified: 789 }),
+      hpglFile('sample.hpgl', 'PA0,0;', { lastModified: 321 }),
+    ]);
+
+    expect(createPreviewJob).toHaveBeenCalledWith(
+      expect.any(Array),
+      ['', '', '', 'sample'],
+      expect.any(Object),
+    );
+    document.querySelector('[data-testid="convert-button"]').click();
+    expect(createConversionJob).toHaveBeenCalledWith(
+      expect.any(Array),
+      ['', '', '', 'sample'],
+      expect.any(Object),
+    );
+  });
+
   it('passes the global centerline setting to preview and conversion', async () => {
     const createPreviewJob = vi.fn(() => ({
       promise: Promise.resolve({ files: [] }),
@@ -530,7 +560,7 @@ describe('mountApp', () => {
     });
 
     await vi.waitFor(() => {
-      expect(document.body.textContent).toContain('empty.zip に対応HPGLがありません');
+      expect(document.body.textContent).toContain('empty.zip に対応ファイルがありません');
     });
     expect(document.querySelectorAll('[data-testid="file-row"]')).toHaveLength(0);
     expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
@@ -1148,7 +1178,8 @@ describe('mountApp', () => {
 
     expect(readme).toContain('ZIP');
     expect(readme).toContain('サブフォルダ');
-    expect(readme).toContain('対応するHPGLファイルだけ');
+    expect(readme).toContain('対応ファイルだけ');
+    expect(readme).toContain('対応ファイル: 100件以下');
     expect(readme).toContain('50 MiB');
     expect(readme).toContain('100件');
     expect(readme).toContain('20 MiB');

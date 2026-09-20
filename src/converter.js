@@ -138,7 +138,12 @@ function resolveLayerName(input, fallback) {
 }
 
 function defaultLayerName(input) {
-  return leafName(input.name).replace(/\.[^.]+$/, '') || 'layer';
+  const leaf = leafName(input.name);
+  const kind = input.kind ?? classifyInputName(input.name);
+  const base = kind === 'hpgl'
+    ? (leaf.replace(/\.[^.]+$/, '') || 'layer')
+    : (leaf.replace(/\./g, '_') || 'layer');
+  return base.replace(/[<>/\\":;?*|=,]/g, '_') || 'layer';
 }
 
 function normalizeInput(input) {
@@ -232,29 +237,47 @@ export function parseInputs(inputs, options = {}) {
       input,
       drawable?.effectiveLayerName ?? defaultLayerName(input),
     );
+    const extra = assigned.extras[jobIndex];
+    const skipAmbiguousExcellon = extra.some(
+      diagnostic => diagnostic.command === 'DRILL_FORMAT_AMBIGUOUS',
+    );
     let converted;
 
     try {
       if (isReadFailure(input)) {
         throw new Error(input.readError);
       }
-      const parsed = parseDrawable(input, drawable, strokeMode);
-      converted = {
-        geometries: parsed.geometries,
-        file: {
-          name: input.name,
-          layerName,
-          geometryCount: parsed.summary.geometryCount,
-          errorCount: parsed.summary.errorCount,
-          warningCount: parsed.summary.warningCount,
-          diagnostics: parsed.diagnostics,
-        },
-      };
+      if (skipAmbiguousExcellon && (drawable?.kind ?? input.kind) === 'excellon') {
+        converted = {
+          geometries: [],
+          file: {
+            name: input.name,
+            layerName,
+            geometryCount: 0,
+            errorCount: 0,
+            warningCount: 0,
+            diagnostics: [],
+          },
+        };
+      } else {
+        const parsed = parseDrawable(input, drawable, strokeMode);
+        converted = {
+          geometries: parsed.geometries,
+          file: {
+            name: input.name,
+            layerName,
+            geometryCount: parsed.summary.geometryCount,
+            errorCount: parsed.summary.errorCount,
+            warningCount: parsed.summary.warningCount,
+            diagnostics: parsed.diagnostics,
+          },
+        };
+      }
     } catch (error) {
       converted = failedFileResult({ ...input, layerName }, error);
     }
 
-    converted.file = withPreparedDiagnostics(converted.file, assigned.extras[jobIndex]);
+    converted.file = withPreparedDiagnostics(converted.file, extra);
     geometries.push(...converted.geometries);
     files.push(converted.file);
     layers.push(converted.file.layerName);
