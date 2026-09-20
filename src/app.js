@@ -254,6 +254,7 @@ export function mountApp(root, deps = {}) {
     layerNames: [],
     progressByIndex: new Map(),
     progressIndex: 0,
+    progressFileName: null,
     converting: false,
     result: null,
     autoDownloadedResult: null,
@@ -672,8 +673,16 @@ export function mountApp(root, deps = {}) {
         warningCount: number(progress.warningCount),
       };
     }
-    if (state.converting && index === state.progressIndex) {
-      return { status: '変換中', statusKind: 'working', geometryCount: 0, errorCount: 0, warningCount: 0 };
+    if (state.converting) {
+      const convertingByName = typeof state.progressFileName === 'string'
+        && state.progressFileName.length > 0
+        && matchingFileStats([{ name: state.progressFileName }], file);
+      const convertingByIndex = state.progressFileName == null
+        && !isAuxiliaryInput(file)
+        && index === state.progressIndex;
+      if (convertingByName || convertingByIndex) {
+        return { status: '変換中', statusKind: 'working', geometryCount: 0, errorCount: 0, warningCount: 0 };
+      }
     }
     const previewed = matchingFileStats(state.previewFiles, file);
     if (previewed) {
@@ -1108,6 +1117,7 @@ export function mountApp(root, deps = {}) {
     clearResult();
     state.progressByIndex.clear();
     state.progressIndex = 0;
+    state.progressFileName = null;
     state.converting = true;
     const token = Symbol('conversion');
     state.token = token;
@@ -1124,6 +1134,9 @@ export function mountApp(root, deps = {}) {
       }
       const index = Math.max(0, number(event.index));
       const total = Math.max(1, number(event.total) || state.files.length);
+      state.progressFileName = typeof event.fileName === 'string' && event.fileName.length > 0
+        ? event.fileName
+        : null;
       if (event.phase === 'reading') {
         const completed = Math.max(0, index - 1);
         state.progressIndex = Math.min(completed, state.files.length);
