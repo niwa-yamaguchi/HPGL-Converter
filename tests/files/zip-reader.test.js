@@ -410,7 +410,7 @@ describe('createZipExpansionJob', () => {
       'ZIP_ENTRY_LIMIT',
       zipFile({ 'A.H01': strToU8('PU;'), 'B.H02': strToU8('PU;') }),
       { maxEntries: 1 },
-      '1件',
+      '対応ファイルが1件を超えています',
     ],
     [
       'ZIP_ENTRY_TOO_LARGE',

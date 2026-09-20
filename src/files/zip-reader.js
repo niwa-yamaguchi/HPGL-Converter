@@ -113,7 +113,7 @@ function archiveTooLarge(limits) {
 function entryLimitExceeded(limits) {
   return zipError(
     'ZIP_ENTRY_LIMIT',
-    `対応HPGLが${limits.maxEntries}件を超えています`,
+    `対応ファイルが${limits.maxEntries}件を超えています`,
   );
 }
 
