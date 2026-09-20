@@ -200,4 +200,38 @@ describe('prepareInputSet', () => {
       }),
     ]));
   });
+
+  it('does not infer digit widths for METRIC drills with decimal XY', () => {
+    const result = prepareInputSet([
+      record('gerber', 'board.gbr', metricBoxGerber(50, 50)),
+      record('excellon', 'board.drl', ascii(
+        'M48',
+        'METRIC',
+        'T1C0.3',
+        '%',
+        'X1.9Y40.988',
+        'X10.0Y20.5',
+        'M30',
+      )),
+    ]);
+
+    const drill = drawable(result, 'board.drl');
+    expect(result.diagnostics.some(item => item.command === 'DRILL_FORMAT_AMBIGUOUS')).toBe(false);
+    expect(drill.parseOptions.defaults?.integerDigits).toBeUndefined();
+    expect(drill.parseOptions.defaults?.fractionDigits).toBeUndefined();
+  });
+
+  it('does not report DRILL_FORMAT_AMBIGUOUS for header-only INCH drills with no XY', () => {
+    const result = prepareInputSet([
+      record('gerber', 'board.gbr', metricBoxGerber(50, 50)),
+      record('excellon', 'board.drl', ascii(
+        'M48',
+        'INCH',
+        '%',
+        'M30',
+      )),
+    ]);
+
+    expect(result.diagnostics.some(item => item.command === 'DRILL_FORMAT_AMBIGUOUS')).toBe(false);
+  });
 });

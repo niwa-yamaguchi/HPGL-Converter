@@ -417,18 +417,36 @@ function candidateFits(pointsMm, bounds) {
   return true;
 }
 
+function isDrillFormatDetermined(defaults, inspected) {
+  const hasUnits = defaults?.units != null || inspected.units != null;
+  const hasDigits = (
+    (defaults?.integerDigits != null && defaults?.fractionDigits != null)
+    || (inspected.integerDigits != null && inspected.fractionDigits != null)
+  );
+  if (hasUnits && hasDigits) {
+    return true;
+  }
+  if (hasUnits && inspected.points.length === 0) {
+    return true;
+  }
+  if (hasUnits && inspected.points.every(token => token.x.includes('.') && token.y.includes('.'))) {
+    return true;
+  }
+  return false;
+}
+
 function inferDrillFormat(drawable, bounds, diagnostics) {
   const defaults = drawable.parseOptions.defaults ?? {};
   const inspected = inspectExcellon(decode(drawable.data));
+  if (isDrillFormatDetermined(defaults, inspected)) {
+    return;
+  }
+
   const hasUnits = defaults.units != null || inspected.units != null;
   const hasDigits = (
     (defaults.integerDigits != null && defaults.fractionDigits != null)
     || (inspected.integerDigits != null && inspected.fractionDigits != null)
   );
-  if (hasUnits && hasDigits) {
-    return;
-  }
-
   const unitsList = hasUnits ? [defaults.units ?? inspected.units] : UNIT_CANDIDATES;
   const formats = hasDigits
     ? [{
@@ -530,12 +548,7 @@ export function prepareInputSet(inputs = [], _options = {}) {
     }
     const defaults = drawable.parseOptions.defaults;
     const inspected = inspectExcellon(decode(drawable.data));
-    const hasUnits = defaults?.units != null || inspected.units != null;
-    const hasDigits = (
-      (defaults?.integerDigits != null && defaults?.fractionDigits != null)
-      || (inspected.integerDigits != null && inspected.fractionDigits != null)
-    );
-    if (hasUnits && hasDigits) {
+    if (isDrillFormatDetermined(defaults, inspected)) {
       continue;
     }
     const groupDir = dirName(drawable);
