@@ -116,7 +116,7 @@ function ensureVertexCount(count, ctx) {
 }
 
 function circlePath(cx, cy, radius, ctx) {
-  const segments = circleSegmentCount(radius, ctx.tolerance);
+  const segments = circleSegmentCount(radius * ctx.unitScale, ctx.tolerance);
   ensureVertexCount(segments, ctx);
   const path = [];
   for (let index = 0; index < segments; index += 1) {
@@ -162,7 +162,7 @@ function obroundPath(width, height, ctx) {
   if (width >= height) {
     const radius = height / 2;
     const offset = (width - height) / 2;
-    const cap = Math.max(6, Math.ceil(circleSegmentCount(radius, ctx.tolerance) / 2));
+    const cap = Math.max(6, Math.ceil(circleSegmentCount(radius * ctx.unitScale, ctx.tolerance) / 2));
     ensureVertexCount((cap + 1) * 2, ctx);
     const path = [];
     for (let index = 0; index <= cap; index += 1) {
@@ -183,7 +183,7 @@ function obroundPath(width, height, ctx) {
   }
   const radius = width / 2;
   const offset = (height - width) / 2;
-  const cap = Math.max(6, Math.ceil(circleSegmentCount(radius, ctx.tolerance) / 2));
+  const cap = Math.max(6, Math.ceil(circleSegmentCount(radius * ctx.unitScale, ctx.tolerance) / 2));
   ensureVertexCount((cap + 1) * 2, ctx);
   const path = [];
   for (let index = 0; index <= cap; index += 1) {
@@ -642,24 +642,46 @@ function instantiateMacro(definition, ctx) {
   return paths;
 }
 
+function scalePaths(paths, unitScale) {
+  if (unitScale === 1) {
+    return paths;
+  }
+  return paths.map(item => ({
+    exposure: item.exposure,
+    path: item.path.map(point => ({
+      x: point.x * unitScale,
+      y: point.y * unitScale,
+    })),
+  }));
+}
+
 export function instantiateAperture(definition, options = {}) {
+  const unitScale = (options.units ?? definition.units) === 'inch' ? 25.4 : 1;
   const ctx = {
     tolerance: options.chordToleranceMm ?? DEFAULT_CHORD_TOLERANCE_MM,
     maxVertices: options.maxVertices ?? DEFAULT_MAX_VERTICES,
     offset: definition.offset ?? definition.macroOffset,
+    unitScale,
   };
+  let paths;
   switch (definition.kind) {
     case 'circle':
-      return instantiateCircle(definition.modifiers, ctx);
+      paths = instantiateCircle(definition.modifiers, ctx);
+      break;
     case 'rectangle':
-      return instantiateRectangle(definition.modifiers, ctx);
+      paths = instantiateRectangle(definition.modifiers, ctx);
+      break;
     case 'obround':
-      return instantiateObround(definition.modifiers, ctx);
+      paths = instantiateObround(definition.modifiers, ctx);
+      break;
     case 'polygon':
-      return instantiatePolygon(definition.modifiers, ctx);
+      paths = instantiatePolygon(definition.modifiers, ctx);
+      break;
     case 'macro':
-      return instantiateMacro(definition, ctx);
+      paths = instantiateMacro(definition, ctx);
+      break;
     default:
       fail(`Unsupported aperture kind ${definition.kind}`, ctx.offset);
   }
+  return scalePaths(paths, unitScale);
 }

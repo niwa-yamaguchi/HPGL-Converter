@@ -361,15 +361,7 @@ export function parseGerberObjects(data, context) {
   function handleAd(token) {
     const definition = parseApertureDefinition(token.raw, macros);
     definition.offset = token.offset;
-    if (format.snapshot().units === 'inch') {
-      definition.modifiers = definition.modifiers.map((value, index) => {
-        const millimetres = value * 25.4;
-        if (!Number.isFinite(millimetres)) {
-          throw new RangeError(`AD modifier ${index + 1} must be finite`);
-        }
-        return millimetres;
-      });
-    }
+    definition.units = format.snapshot().units;
     apertures.set(definition.code, definition);
   }
 

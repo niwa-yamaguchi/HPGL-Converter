@@ -152,6 +152,25 @@ describe('instantiateAperture', () => {
     expect(huge[0].path.length).toBe(4096);
   });
 
+  it('scales inch paths without converting polygon vertices or rotation', () => {
+    const aperture = parseApertureDefinition('ADD10P,0.1X6X30', new Map());
+    const paths = instantiateAperture(aperture, { chordToleranceMm: 0.01, units: 'inch' });
+    const radius = 0.05 * 25.4;
+    expect(aperture.modifiers).toEqual([0.1, 6, 30]);
+    expect(paths[0].path).toHaveLength(6);
+    expect(hasPoint(
+      paths[0].path,
+      radius * Math.cos(Math.PI / 6),
+      radius * Math.sin(Math.PI / 6),
+    )).toBe(true);
+  });
+
+  it('scales inch AM circle literals to millimetres', () => {
+    const macros = macrosOf('Disk', ['1,1,0.1,0,0']);
+    const paths = instantiate('ADD10Disk', macros, { chordToleranceMm: 0.01, units: 'inch' });
+    expect(maxRadius(paths[0].path)).toBeCloseTo(1.27, 5);
+  });
+
   it('evaluates variable assignment, x multiply, and parentheses', () => {
     const macros = macrosOf('Scaled', [
       '$3=($1+$2)x0.5',

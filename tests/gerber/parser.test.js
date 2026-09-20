@@ -305,19 +305,46 @@ describe('parseGerberObjects', () => {
     expect(paths[0].path.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('converts inch AD modifiers to millimetres when storing aperture definitions', () => {
+  it('keeps inch polygon vertex count and rotation, then scales path coordinates', () => {
     const result = parseGerberObjects(ascii(
       '%FSLAX26Y26*%',
       '%MOIN*%',
-      '%ADD10C,0.1*%',
+      '%ADD10P,0.1X6X30*%',
       'D10*',
       'X0Y0D03*',
       'M02*',
     ), context);
 
-    expect(result.apertures.get(10).modifiers[0]).toBeCloseTo(2.54);
+    expect(result.apertures.get(10).modifiers).toEqual([0.1, 6, 30]);
     const paths = instantiateAperture(result.apertures.get(10), { chordToleranceMm: 0.01 });
-    expect(Math.max(...paths[0].path.map(point => Math.hypot(point.x, point.y))))
+    const radius = 0.05 * 25.4;
+    expect(paths[0].path).toHaveLength(6);
+    expect(paths[0].path.some(point => (
+      Math.abs(point.x - radius * Math.cos(Math.PI / 6)) < 1e-9
+      && Math.abs(point.y - radius * Math.sin(Math.PI / 6)) < 1e-9
+    ))).toBe(true);
+  });
+
+  it('scales inch AM circle literals to millimetres consistently with AD sizes', () => {
+    const result = parseGerberObjects(ascii(
+      '%FSLAX26Y26*%',
+      '%MOIN*%',
+      '%AMDisk*',
+      '1,1,0.1,0,0*',
+      '%',
+      '%ADD10Disk*%',
+      '%ADD11C,0.1*%',
+      'D11*',
+      'X0Y0D03*',
+      'M02*',
+    ), context);
+
+    expect(result.apertures.get(11).modifiers).toEqual([0.1]);
+    const macroPaths = instantiateAperture(result.apertures.get(10), { chordToleranceMm: 0.01 });
+    const circlePaths = instantiateAperture(result.apertures.get(11), { chordToleranceMm: 0.01 });
+    expect(Math.max(...macroPaths[0].path.map(point => Math.hypot(point.x, point.y))))
+      .toBeCloseTo(1.27, 5);
+    expect(Math.max(...circlePaths[0].path.map(point => Math.hypot(point.x, point.y))))
       .toBeCloseTo(1.27, 5);
   });
 
