@@ -154,6 +154,38 @@ describe('prepareInputSet', () => {
     ]));
   });
 
+  it('does not treat TnnC diameters as coordinate format when inferring drill units', () => {
+    const result = prepareInputSet([
+      record('gerber', 'board.gbr', metricBoxGerber(120, 60)),
+      record('excellon', 'board.dr1', ascii('T01C00.00', 'X0Y0', 'X10000Y5000', 'M30')),
+    ]);
+
+    const drill = drawable(result, 'board.dr1');
+    expect(drill.parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 4, fractionDigits: 2, zeroSuppression: 'L',
+    });
+    expect(result.diagnostics.some(item => item.command === 'DRILL_FORMAT_AMBIGUOUS')).toBe(false);
+  });
+
+  it('fills leading-zero suppression when a DRLIST omits Zero Suppression', () => {
+    const sidecar = [
+      'Board Name  :  board',
+      'Database Format     :  Integers 4 , Fractions 2',
+      'Units               :  mm',
+      'File Name   :  board.dr1',
+      '     T01  |     0.400  :      Through  :       1  :',
+    ].join('\n');
+    const result = prepareInputSet([
+      record('excellon', 'board.dr1', headerlessDrill('X0Y0', 'X10000Y5000')),
+      record('drill-list', 'board_DRLIST_M.txt', sidecar),
+    ]);
+
+    expect(drawable(result, 'board.dr1').parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 4, fractionDigits: 2, zeroSuppression: 'L',
+    });
+    expect(drawable(result, 'board.dr1').parseOptions.defaults.tools.get(1)).toBe(0.4);
+  });
+
   it('reports DRILL_FORMAT_AMBIGUOUS when the group has no Gerber geometry', () => {
     const result = prepareInputSet([
       record('excellon', 'board.dr1', headerlessDrill('X0Y0', 'X10000Y5000')),

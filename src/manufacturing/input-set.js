@@ -86,6 +86,14 @@ function applyDefaults(drawable, defaults) {
       next.zeroSuppression = current.zeroSuppression;
     }
   }
+  if (
+    next.units != null
+    && next.integerDigits != null
+    && next.fractionDigits != null
+    && next.zeroSuppression == null
+  ) {
+    next.zeroSuppression = 'L';
+  }
   drawable.parseOptions = { defaults: next };
 }
 
@@ -285,16 +293,22 @@ function inspectExcellon(text) {
     if (!stripped) {
       continue;
     }
-    if (stripped.startsWith('METRIC') || stripped.startsWith('M71')) {
+    const isUnitHeader = stripped.startsWith('METRIC') || stripped.startsWith('M71');
+    const isInchHeader = stripped.startsWith('INCH') || stripped.startsWith('M72');
+    const isFormatHeader = isUnitHeader || isInchHeader
+      || stripped.startsWith('FMAT') || stripped.includes('FORMAT');
+    if (isUnitHeader) {
       units = 'mm';
-    } else if (stripped.startsWith('INCH') || stripped.startsWith('M72')) {
+    } else if (isInchHeader) {
       units = 'inch';
     }
-    const format = stripped.match(/0+\.0+/);
-    if (format) {
-      const [integerPart, fractionPart] = format[0].split('.');
-      integerDigits = integerPart.length;
-      fractionDigits = fractionPart.length;
+    if (isFormatHeader) {
+      const format = stripped.match(/0+\.0+/);
+      if (format) {
+        const [integerPart, fractionPart] = format[0].split('.');
+        integerDigits = integerPart.length;
+        fractionDigits = fractionPart.length;
+      }
     }
 
     const index = { value: 0 };
