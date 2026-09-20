@@ -41,6 +41,25 @@ describe('parseGerber', () => {
     ]));
   });
 
+  it('sweeps a circular D01 into a closed outline whose size includes the aperture', () => {
+    const bytes = ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D02*',
+      'X5000000Y0D01*',
+      'M02*',
+    );
+    const result = parseGerber(bytes, context, { strokeMode: 'outline' });
+    const outlines = result.geometries.filter(item => item.type === 'polyline' && item.closed);
+    expect(result.summary.errorCount).toBe(0);
+    expect(outlines).toHaveLength(1);
+    const bounds = polylineBounds(outlines[0]);
+    expect(bounds.maxX - bounds.minX).toBeCloseTo(5.2, 1);
+    expect(bounds.maxY - bounds.minY).toBeCloseTo(0.2, 1);
+  });
+
   it('unions overlapping dark shapes into one outline', () => {
     const result = parseGerber(loadFixture('outline.gbr'), context, { strokeMode: 'outline' });
     const outlines = result.geometries.filter(item => item.type === 'polyline' && item.closed);
