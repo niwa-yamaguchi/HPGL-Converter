@@ -429,16 +429,62 @@ export function plotGerber(parsed, context, options = {}) {
     enforceLimits(artwork, limits);
   }
 
+  let pendingStroke = null;
+
+  function flushStroke() {
+    if (!pendingStroke || pendingStroke.points.length < 2) {
+      pendingStroke = null;
+      return;
+    }
+    const points = pendingStroke.points.map(point => [...point]);
+    const closed = points.length >= 4 && almostEqual(points[0], points[points.length - 1]);
+    if (closed) {
+      points.pop();
+    }
+    const common = metadata(context, pendingStroke.offset);
+    if (closed && points.length >= 3) {
+      geometries.push({ type: 'polyline', points, closed: true, ...common });
+    } else if (points.length >= 3) {
+      geometries.push({ type: 'polyline', points, closed: false, ...common });
+    } else {
+      geometries.push({ type: 'line', points, ...common });
+    }
+    pendingStroke = null;
+  }
+
+  function appendLinearStroke(object) {
+    const start = object.start;
+    const end = object.end;
+    if (almostEqual(start, end)) {
+      return;
+    }
+    if (pendingStroke && almostEqual(pendingStroke.points[pendingStroke.points.length - 1], start)) {
+      pendingStroke.points.push([...end]);
+      return;
+    }
+    flushStroke();
+    pendingStroke = {
+      points: [[...start], [...end]],
+      offset: object.offset,
+    };
+  }
+
   try {
     for (const object of parsed.objects ?? []) {
       try {
         if (object.kind === 'draw' && strokeMode === 'centerline') {
           flushPolarity();
           usedCenterline = true;
-          geometries.push(drawToStroke(object, context));
+          if (object.interpolation === 'linear') {
+            appendLinearStroke(object);
+          } else {
+            flushStroke();
+            geometries.push(drawToStroke(object, context));
+          }
           continue;
         }
 
+        flushStroke();
         let paths = [];
         if (object.kind === 'draw') {
           const definition = requireAperture(object.apertureCode);
@@ -463,6 +509,7 @@ export function plotGerber(parsed, context, options = {}) {
         if (isFatalPlotError(error)) {
           throw error;
         }
+        flushStroke();
         flushPolarity();
         addDiagnostic({
           severity: 'error',
@@ -476,6 +523,7 @@ export function plotGerber(parsed, context, options = {}) {
       }
     }
 
+    flushStroke();
     flushPolarity();
     enforceLimits(artwork, limits);
     for (const path of artwork) {

@@ -81,6 +81,58 @@ describe('parseGerber', () => {
     ))).toBe(true);
   });
 
+  it('joins connected centerline draws into a polyline', () => {
+    const result = parseGerber(ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D02*',
+      'X1000000Y0D01*',
+      'X2000000Y1000000D01*',
+      'X3000000Y1000000D01*',
+      'M02*',
+    ), context, { strokeMode: 'centerline' });
+
+    expect(result.summary.errorCount).toBe(0);
+    expect(result.geometries).toEqual([
+      expect.objectContaining({
+        type: 'polyline',
+        closed: false,
+        points: [[0, 0], [1, 0], [2, 1], [3, 1]],
+      }),
+    ]);
+  });
+
+  it('closes a centerline loop and keeps a pen-up gap as separate lines', () => {
+    const result = parseGerber(ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D02*',
+      'X1000000Y0D01*',
+      'X1000000Y1000000D01*',
+      'X0Y1000000D01*',
+      'X0Y0D01*',
+      'X3000000Y0D02*',
+      'X4000000Y0D01*',
+      'X5000000Y0D02*',
+      'X6000000Y0D01*',
+      'M02*',
+    ), context, { strokeMode: 'centerline' });
+
+    expect(result.geometries).toEqual([
+      expect.objectContaining({
+        type: 'polyline',
+        closed: true,
+        points: [[0, 0], [1, 0], [1, 1], [0, 1]],
+      }),
+      expect.objectContaining({ type: 'line', points: [[3, 0], [4, 0]] }),
+      expect.objectContaining({ type: 'line', points: [[5, 0], [6, 0]] }),
+    ]);
+  });
+
   it('keeps D03 flashes and regions closed in centerline mode', () => {
     const result = parseGerber(fixture, context, { strokeMode: 'centerline' });
     const closed = result.geometries.filter(item => item.type === 'polyline' && item.closed);
