@@ -1,0 +1,33 @@
+****************************************************************: DRLIST_M :***
+
+Board Name  :  P-00620-1
+Date        :  2026/9/18
+
+*******************************************************************************
+
+<<< Format >>>
+
+Code                :  Ascii
+Coordinate Mode     :  Absolute
+Database Format     :  Integers 4 , Fractions 2
+Units               :  mm., mm (Metric)
+Zero Suppression    :  On
+X,Y Omit            :  Off
+Scale               :  1.000
+End Of Block        :  CR/LF
+Stop Code           :  M02
+
+*******************************************************************************
+
+File Name   :  P-00620-1.dr1
+<<< Drill Data Table >>>                             From Layer  1 To Layer  2
+
+  Tool    |  Hole         Hole            Hole
+  Number  |  Diameter  :  Kind         :  Count   :
+---------------------------------------------------
+     T01  |     0.400  :      Through  :     311  :
+     T02  |     0.600  :      Through  :      21  :
+---------------------------------------------------
+                          Total(Hole)  :     332  :
+
+*********************************************************************: End :***

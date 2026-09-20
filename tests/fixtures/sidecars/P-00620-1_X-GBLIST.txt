@@ -1,0 +1,28 @@
+*******************************************************************************
+
+Board Name  :  P-00620-1
+Date        :  2026/9/18
+
+*******************************************************************************
+<<< File >>>
+
+  P-00620-1.G01  :  Pattern Layer  1 [Top Side]     :
+  P-00620-1.G03  :  Symbol Mark      [Top Side]     :
+  P-00620-1.G09  :  Board Outline                   :
+
+*******************************************************************************
+<<< Format >>>
+
+Gerber Format       :  RS-274X
+Code                :  Ascii
+Coordinate Mode     :  Absolute
+Database Format     :  Integers 4 , Fractions 4
+Record              :  512 Byte
+Units               :  mm., mm (Metric)
+Zero Suppression    :  On
+X,Y Omit            :  Off
+Scale               :  1.000
+End Of Block        :  *
+Stop Code           :  M00
+
+*******************************************************************< End >*****

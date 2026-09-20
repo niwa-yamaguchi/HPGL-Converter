@@ -1,0 +1,171 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { prepareInputSet } from '../../src/manufacturing/input-set.js';
+
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'sidecars');
+const loadSidecar = name => new Uint8Array(readFileSync(join(fixtureDir, name)));
+
+const ascii = (...lines) => new TextEncoder().encode(lines.join('\n'));
+const gerberListBytes = loadSidecar('P-00620-1_X-GBLIST.txt');
+const drillListBytes = loadSidecar('P-00620-1_DRLIST_M.txt');
+
+function record(kind, name, data, path = name) {
+  return {
+    name,
+    path,
+    kind,
+    data,
+    size: typeof data === 'string' ? data.length : data.byteLength,
+    identity: `${path}\0${kind}`,
+  };
+}
+
+function metricBoxGerber(maxX, maxY) {
+  const scale = 1_000_000;
+  return ascii(
+    '%FSLAX46Y46*%',
+    '%MOMM*%',
+    '%ADD10C,0.002000*%',
+    'D10*',
+    'X0Y0D03*',
+    `X${Math.round(maxX * scale)}Y${Math.round(maxY * scale)}D03*`,
+    'M02*',
+  );
+}
+
+function headerlessDrill(...points) {
+  return ascii('T01', ...points, 'M30');
+}
+
+function drawable(result, name) {
+  return result.drawableInputs.find(item => item.name === name || item.path === name);
+}
+
+describe('prepareInputSet', () => {
+  it('keeps sidecars in auxiliaryFiles and manufacturing files in drawableInputs', () => {
+    const result = prepareInputSet([
+      record('gerber', 'P-00620-1.G03', metricBoxGerber(10, 10)),
+      record('excellon', 'P-00620-1.dr1', headerlessDrill('X0Y0')),
+      record('hpgl', 'drawing.H01', 'SP1;PU;'),
+      record('gerber-list', 'P-00620-1_X-GBLIST.txt', gerberListBytes),
+      record('drill-list', 'P-00620-1_DRLIST_M.txt', drillListBytes),
+    ]);
+
+    expect(result.auxiliaryFiles.map(item => item.kind).sort()).toEqual([
+      'drill-list', 'gerber-list',
+    ]);
+    expect(result.drawableInputs.map(item => item.kind).sort()).toEqual([
+      'excellon', 'gerber', 'hpgl',
+    ]);
+    expect(result).not.toBeInstanceOf(Promise);
+  });
+
+  it('applies a uniquely matching listed filename before other association rules', () => {
+    const result = prepareInputSet([
+      record('gerber', 'P-00620-1.G03', metricBoxGerber(10, 10)),
+      record('excellon', 'P-00620-1.dr1', headerlessDrill('X0Y0')),
+      record('excellon', 'other.drl', headerlessDrill('X0Y0')),
+      record('gerber-list', 'P-00620-1_X-GBLIST.txt', gerberListBytes),
+      record('drill-list', 'P-00620-1_DRLIST_M.txt', drillListBytes),
+    ]);
+
+    const gerber = drawable(result, 'P-00620-1.G03');
+    const matched = drawable(result, 'P-00620-1.dr1');
+    const other = drawable(result, 'other.drl');
+
+    expect(gerber.effectiveLayerName).toBe('G03_Symbol_Mark_Top');
+    expect(matched.parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 4, fractionDigits: 2, zeroSuppression: 'L',
+    });
+    expect(matched.parseOptions.defaults.tools.get(1)).toBe(0.4);
+    expect(other.parseOptions).toEqual({});
+  });
+
+  it('does not apply a sidecar when two candidates share the listed file name', () => {
+    const result = prepareInputSet([
+      record('excellon', 'P-00620-1.dr1', headerlessDrill('X0Y0'), 'left/P-00620-1.dr1'),
+      record('excellon', 'P-00620-1.dr1', headerlessDrill('X0Y0'), 'right/P-00620-1.dr1'),
+      record('drill-list', 'P-00620-1_DRLIST_M.txt', drillListBytes, 'other/P-00620-1_DRLIST_M.txt'),
+    ]);
+
+    expect(result.drawableInputs.every(item => item.parseOptions.defaults == null)).toBe(true);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'warning',
+        fileName: 'P-00620-1_DRLIST_M.txt',
+      }),
+    ]));
+  });
+
+  it('associates by board name and directory when the recorded file name is absent', () => {
+    const sidecar = [
+      'Board Name  :  P-00620-1',
+      'Database Format     :  Integers 4 , Fractions 2',
+      'Units               :  mm',
+      'Zero Suppression    :  On',
+      'File Name   :  missing.dr1',
+      '     T01  |     0.400  :      Through  :       1  :',
+    ].join('\n');
+    const result = prepareInputSet([
+      record('excellon', 'P-00620-1.dr1', headerlessDrill('X0Y0'), 'fab/P-00620-1.dr1'),
+      record('excellon', 'other.drl', headerlessDrill('X0Y0'), 'other/other.drl'),
+      record('drill-list', 'P-00620-1_DRLIST_M.txt', sidecar, 'fab/P-00620-1_DRLIST_M.txt'),
+    ]);
+
+    expect(drawable(result, 'fab/P-00620-1.dr1').parseOptions.defaults.tools.get(1)).toBe(0.4);
+    expect(drawable(result, 'other/other.drl').parseOptions).toEqual({});
+  });
+
+  it('guesses a unique headerless drill format from Gerber bounds with a warning', () => {
+    const result = prepareInputSet([
+      record('gerber', 'board.gbr', metricBoxGerber(120, 60)),
+      record('excellon', 'board.dr1', headerlessDrill('X0Y0', 'X10000Y5000')),
+    ]);
+
+    const drill = drawable(result, 'board.dr1');
+    expect(drill.parseOptions.defaults).toMatchObject({
+      units: 'mm', integerDigits: 4, fractionDigits: 2, zeroSuppression: 'L',
+    });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'warning',
+        fileName: 'board.dr1',
+      }),
+    ]));
+    expect(result.diagnostics.some(item => item.command === 'DRILL_FORMAT_AMBIGUOUS')).toBe(false);
+  });
+
+  it('reports DRILL_FORMAT_AMBIGUOUS when two formats still fit the Gerber bounds', () => {
+    const result = prepareInputSet([
+      record('gerber', 'board.gbr', metricBoxGerber(100, 50)),
+      record('excellon', 'board.dr1', headerlessDrill('X0Y0', 'X10000Y5000')),
+    ]);
+
+    const drill = drawable(result, 'board.dr1');
+    expect(drill.parseOptions.defaults).toBeUndefined();
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        fileName: 'board.dr1',
+        command: 'DRILL_FORMAT_AMBIGUOUS',
+      }),
+    ]));
+  });
+
+  it('reports DRILL_FORMAT_AMBIGUOUS when the group has no Gerber geometry', () => {
+    const result = prepareInputSet([
+      record('excellon', 'board.dr1', headerlessDrill('X0Y0', 'X10000Y5000')),
+    ]);
+
+    expect(drawable(result, 'board.dr1').parseOptions).toEqual({});
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        fileName: 'board.dr1',
+        command: 'DRILL_FORMAT_AMBIGUOUS',
+      }),
+    ]));
+  });
+});
