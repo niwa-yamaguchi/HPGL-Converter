@@ -283,6 +283,46 @@ describe('parseExcellon', () => {
     }));
   });
 
+  it('converts a tool defined before METRIC without re-selecting it', () => {
+    const result = parseExcellon(ascii(
+      'M48',
+      'T01C0.8',
+      'METRIC',
+      '%',
+      'X1.0Y2.0',
+      'M30',
+    ), context);
+
+    expect(result.geometries).toEqual([
+      expect.objectContaining({
+        type: 'circle',
+        center: [1, 2],
+        radius: 0.4,
+        layer: 'drill',
+      }),
+    ]);
+    expect(result.summary.warningCount).toBe(0);
+  });
+
+  it('reconverts a file tool with header millimetres after inch defaults', () => {
+    const result = parseExcellon(ascii(
+      'M48',
+      'T01C0.8',
+      'METRIC',
+      '%',
+      'X1.0Y0.0',
+      'M30',
+    ), context, {
+      defaults: { units: 'inch' },
+    });
+
+    expect(result.geometries[0]).toEqual(expect.objectContaining({
+      type: 'circle',
+      center: [1, 0],
+      radius: 0.4,
+    }));
+  });
+
   it('fills only missing header fields from defaults', () => {
     const result = parseExcellon(loadFixture('headerless.dr1'), {
       fileName: 'board.dr1',

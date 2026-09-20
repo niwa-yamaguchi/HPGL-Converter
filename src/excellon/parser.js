@@ -288,11 +288,32 @@ export function parseExcellon(data, context, options = {}) {
     return { point: [x, y], offset };
   }
 
+  function isRawTool(stored) {
+    return stored != null && typeof stored === 'object' && 'raw' in stored;
+  }
+
+  function reconvertRawTools() {
+    if (state.units == null) {
+      return;
+    }
+    for (const [number, stored] of tools) {
+      if (isRawTool(stored)) {
+        tools.set(number, toMm(stored.raw));
+      }
+    }
+  }
+
   function currentDiameter() {
     if (currentTool == null) {
       return null;
     }
-    const diameter = tools.get(currentTool);
+    const stored = tools.get(currentTool);
+    let diameter = null;
+    if (typeof stored === 'number') {
+      diameter = stored;
+    } else if (isRawTool(stored) && state.units != null) {
+      diameter = toMm(stored.raw);
+    }
     return typeof diameter === 'number' && diameter > 0 ? diameter : null;
   }
 
@@ -435,19 +456,11 @@ export function parseExcellon(data, context, options = {}) {
   }
 
   function defineTool(number, diameter) {
-    if (state.units == null) {
-      tools.set(number, { raw: diameter });
-      return;
-    }
-    tools.set(number, toMm(diameter));
+    tools.set(number, { raw: diameter });
   }
 
   function selectTool(number) {
     currentTool = number;
-    const stored = tools.get(number);
-    if (stored && typeof stored === 'object' && 'raw' in stored && state.units != null) {
-      tools.set(number, toMm(stored.raw));
-    }
   }
 
   function takeDigits(raw, index) {
@@ -478,6 +491,7 @@ export function parseExcellon(data, context, options = {}) {
       return;
     }
     if (applyUnitsCommand(stripped, state)) {
+      reconvertRawTools();
       return;
     }
     if (stripped.startsWith('FMAT')) {
@@ -592,8 +606,10 @@ export function parseExcellon(data, context, options = {}) {
         const code = Number(digits);
         if (code === 71) {
           state.units = 'mm';
+          reconvertRawTools();
         } else if (code === 72) {
           state.units = 'inch';
+          reconvertRawTools();
         } else if (code === 15) {
           commitXY();
           if (fatal) {
