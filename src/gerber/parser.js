@@ -2,9 +2,6 @@ import { createGerberCoordinateFormat } from './coordinates.js';
 import { tokenizeGerber } from './tokenizer.js';
 
 const DIAGNOSTIC_DETAIL_LIMIT = 100;
-const KNOWN_EXTENDED = new Set([
-  'FS', 'MO', 'AD', 'AM', 'LP', 'LM', 'LR', 'LS', 'AS', 'SF', 'IN', 'TF', 'TA', 'TO', 'TD',
-]);
 const MIRROR_VALUES = new Set(['N', 'X', 'Y', 'XY']);
 
 function diagnostic(
@@ -224,6 +221,18 @@ export function parseGerberObjects(data, context) {
     state.regionContours = [];
     state.currentContour = null;
     state.regionOffset = token.offset;
+  }
+
+  function diagnoseUnclosedRegion() {
+    addDiagnostic({
+      severity: 'error',
+      fileName: context.fileName,
+      command: 'G36',
+      offset: state.regionOffset,
+      message: 'Unclosed G36 region',
+      skippedCommands: 1,
+      skippedShapes: 0,
+    });
   }
 
   function endRegion() {
@@ -464,7 +473,7 @@ export function parseGerberObjects(data, context) {
   }
 
   function handleExtended(token) {
-    if (state.collectingMacro && !KNOWN_EXTENDED.has(token.code)) {
+    if (state.collectingMacro && /^(?:\d|\$)/.test(token.code)) {
       state.collectingMacro.primitives.push(token.raw);
       return;
     }
@@ -541,6 +550,7 @@ export function parseGerberObjects(data, context) {
 
     if (fields.mCode === 0 || fields.mCode === 2) {
       if (state.region) {
+        diagnoseUnclosedRegion();
         endRegion();
       }
       state.ended = true;
@@ -643,15 +653,7 @@ export function parseGerberObjects(data, context) {
   }
 
   if (state.region) {
-    addDiagnostic({
-      severity: 'error',
-      fileName: context.fileName,
-      command: 'G36',
-      offset: state.regionOffset,
-      message: 'Unclosed G36 region',
-      skippedCommands: 1,
-      skippedShapes: 0,
-    });
+    diagnoseUnclosedRegion();
     endRegion();
   }
 

@@ -379,4 +379,67 @@ describe('parseGerberObjects', () => {
     ]);
     expect(result.summary.errorCount).toBe(1);
   });
+
+  it('does not collect unknown extended commands as AM primitives', () => {
+    const result = parseGerberObjects(ascii(
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%AMDonut*',
+      '1,1,$1,0,0*',
+      '%',
+      '%SRX1Y1I0J0*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D03*',
+      'M02*',
+    ), context);
+
+    expect(result.macros.get('Donut')).toEqual(expect.objectContaining({
+      name: 'Donut',
+      primitives: ['1,1,$1,0,0'],
+    }));
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        command: 'SR',
+        fileName: 'board.gbr',
+      }),
+    ]);
+    expect(result.objects).toEqual([
+      expect.objectContaining({ kind: 'flash', apertureCode: 10 }),
+    ]);
+  });
+
+  it('emits an error for an unclosed G36 ended by M02', () => {
+    const result = parseGerberObjects(ascii(
+      ...metricHeader,
+      'G36*',
+      'X0Y0D02*',
+      'X1000000Y0D01*',
+      'X1000000Y1000000D01*',
+      'X0Y1000000D01*',
+      'X0Y0D01*',
+      'M02*',
+    ), context);
+
+    expect(result.objects).toEqual([
+      expect.objectContaining({
+        kind: 'region',
+        contours: [[
+          expect.objectContaining({ interpolation: 'linear', start: [0, 0], end: [1, 0] }),
+          expect.objectContaining({ interpolation: 'linear', start: [1, 0], end: [1, 1] }),
+          expect.objectContaining({ interpolation: 'linear', start: [1, 1], end: [0, 1] }),
+          expect.objectContaining({ interpolation: 'linear', start: [0, 1], end: [0, 0] }),
+        ]],
+      }),
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        command: 'G36',
+        fileName: 'board.gbr',
+      }),
+    ]);
+    expect(result.summary.errorCount).toBe(1);
+  });
 });
