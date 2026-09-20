@@ -16,6 +16,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "clipper2-ts": "2.0.1-18",
     "fflate": "^0.8.3"
   }
 }
