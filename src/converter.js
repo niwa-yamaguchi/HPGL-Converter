@@ -73,6 +73,10 @@ function jobLeaf(job) {
   return leafName(job.input.path || job.input.name);
 }
 
+function hasDirectory(fileName) {
+  return /[\\/]/.test(String(fileName));
+}
+
 function assignPreparedDiagnostics(jobs, diagnostics) {
   const extras = jobs.map(() => []);
   const leftover = [];
@@ -92,29 +96,32 @@ function assignPreparedDiagnostics(jobs, diagnostics) {
     const pathHits = jobs
       .map((job, index) => index)
       .filter(index => namesEqual(jobs[index].input.path, fileName));
-    if (pathHits.length === 1) {
-      extras[pathHits[0]].push(diagnostic);
-      continue;
-    }
-    if (pathHits.length > 1) {
-      const index = takeNext(`path:${String(fileName).toLowerCase()}`, pathHits);
-      if (index != null) {
-        extras[index].push(diagnostic);
-        continue;
-      }
-      leftover.push(diagnostic);
-      continue;
-    }
-
     const leafHits = jobs
       .map((job, index) => index)
-      .filter(index => namesEqual(jobLeaf(jobs[index]), fileName));
+      .filter(index => namesEqual(jobLeaf(jobs[index]), leafName(fileName)));
+
+    if (hasDirectory(fileName)) {
+      if (pathHits.length === 1) {
+        extras[pathHits[0]].push(diagnostic);
+        continue;
+      }
+      if (pathHits.length > 1) {
+        const index = takeNext(`path:${String(fileName).toLowerCase()}`, pathHits);
+        if (index != null) {
+          extras[index].push(diagnostic);
+          continue;
+        }
+        leftover.push(diagnostic);
+        continue;
+      }
+    }
+
     if (leafHits.length === 1) {
       extras[leafHits[0]].push(diagnostic);
       continue;
     }
     if (leafHits.length > 1) {
-      const index = takeNext(`leaf:${String(fileName).toLowerCase()}`, leafHits);
+      const index = takeNext(`leaf:${leafName(fileName).toLowerCase()}`, leafHits);
       if (index != null) {
         extras[index].push(diagnostic);
         continue;

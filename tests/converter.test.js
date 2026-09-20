@@ -364,4 +364,30 @@ describe('manufacturing conversion', () => {
     expect(ambiguous(result.files[0])).toHaveLength(1);
     expect(ambiguous(result.files[1])).toHaveLength(1);
   });
+
+  it('does not path-match a leaf-only diagnostic onto a native same-leaf file', async () => {
+    const headerless = ascii('T01', 'X0Y0', 'M30');
+    const result = await convertInputs([
+      {
+        name: 'P-00620-1.dr1',
+        path: 'P-00620-1.dr1',
+        kind: 'excellon',
+        layerName: 'native',
+        data: headerless,
+      },
+      {
+        name: 'left/P-00620-1.dr1',
+        path: 'left/P-00620-1.dr1',
+        kind: 'excellon',
+        layerName: 'left',
+        data: headerless,
+      },
+    ], () => {});
+
+    const ambiguous = file => file.diagnostics.filter(
+      diagnostic => diagnostic.command === 'DRILL_FORMAT_AMBIGUOUS',
+    );
+    expect(ambiguous(result.files[0])).toHaveLength(1);
+    expect(ambiguous(result.files[1])).toHaveLength(1);
+  });
 });
