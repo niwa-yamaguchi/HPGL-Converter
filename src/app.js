@@ -676,6 +676,7 @@ export function mountApp(root, deps = {}) {
     if (state.converting) {
       const convertingByName = typeof state.progressFileName === 'string'
         && state.progressFileName.length > 0
+        && !isAuxiliaryInput(file)
         && matchingFileStats([{ name: state.progressFileName }], file);
       const convertingByIndex = state.progressFileName == null
         && !isAuxiliaryInput(file)

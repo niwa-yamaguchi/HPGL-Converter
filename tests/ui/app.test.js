@@ -395,6 +395,31 @@ describe('mountApp', () => {
     expect(gerberRow.textContent).toContain('変換中');
   });
 
+  it('does not mark auxiliary rows as converting when reading reports a sidecar fileName', () => {
+    const job = deferredJob();
+    const createConversionJob = vi.fn((_files, _layers, options) => {
+      job.options = options;
+      return job;
+    });
+    mount({ createConversionJob });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('P-00620-1_DRLIST_M.txt'),
+      hpglFile('board.gbr', 'G04*', { lastModified: 456 }),
+    ]);
+    document.querySelector('[data-testid="convert-button"]').click();
+
+    job.options.onProgress({
+      phase: 'reading',
+      fileName: 'P-00620-1_DRLIST_M.txt',
+      index: 1,
+      total: 2,
+    });
+
+    const sidecarRow = [...document.querySelectorAll('[data-testid="file-row"]')]
+      .find(row => row.textContent.includes('DRLIST'));
+    expect(sidecarRow.textContent).not.toContain('変換中');
+  });
+
   it('adds supported files while rejecting unsupported and duplicate files with a notice', () => {
     mount({ createConversionJob: vi.fn() });
     const input = document.querySelector('[data-testid="file-input"]');
