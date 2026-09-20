@@ -41,7 +41,12 @@ describe('input records', () => {
     const file = new File(['PU;'], 'drawing.hpgl');
     const record = createNativeInputRecord(file);
 
-    expect(toWorkerInput(record)).toEqual({ name: 'drawing.hpgl', blob: file });
+    expect(toWorkerInput(record)).toEqual({
+      name: 'drawing.hpgl',
+      path: 'drawing.hpgl',
+      kind: 'hpgl',
+      blob: file,
+    });
   });
 
   it('records native kind and file-name path', () => {

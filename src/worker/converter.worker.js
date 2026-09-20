@@ -1,4 +1,5 @@
 import { convertInputs } from '../converter.js';
+import { classifyInputName } from '../files/file-policy.js';
 
 function safeMessage(error) {
   if (error instanceof Error && error.message) {
@@ -56,10 +57,18 @@ export async function handleConversionMessage(message, post) {
       });
       try {
         const buffer = await file.blob.arrayBuffer();
-        inputs.push({ name: file.name, layerName, data: new Uint8Array(buffer) });
+        inputs.push({
+          name: file.name,
+          path: file.path ?? file.name,
+          kind: file.kind ?? classifyInputName(file.name),
+          layerName,
+          data: new Uint8Array(buffer),
+        });
       } catch (error) {
         inputs.push({
           name: file.name,
+          path: file.path ?? file.name,
+          kind: file.kind ?? classifyInputName(file.name),
           layerName,
           data: null,
           readError: safeMessage(error),
@@ -69,7 +78,7 @@ export async function handleConversionMessage(message, post) {
 
     const result = await convertInputs(inputs, event => {
       post({ type: 'progress', requestId, event });
-    });
+    }, { strokeMode: message.options?.strokeMode ?? 'outline' });
     post({ type: 'complete', requestId, result }, [result.buffer]);
   } catch (error) {
     post({ type: 'error', requestId, message: safeMessage(error) });

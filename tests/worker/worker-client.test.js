@@ -87,6 +87,33 @@ describe('createConversionJob', () => {
     expect(secondWorker.terminateCount).toBe(1);
   });
 
+  it('posts strokeMode and classified kind/path on the convert message', () => {
+    const harness = setup();
+    const files = [file('board.gtl')];
+    createConversionJob(files, ['gtl'], { ...harness.options, strokeMode: 'centerline' });
+
+    expect(harness.workers[0].messages[0]).toMatchObject({
+      type: 'convert',
+      files: [{ name: 'board.gtl', blob: files[0].blob, kind: 'gerber', path: 'board.gtl' }],
+      layerNames: ['gtl'],
+      options: { strokeMode: 'centerline' },
+    });
+  });
+
+  it('defaults posted strokeMode to outline', () => {
+    const harness = setup();
+    createConversionJob([file('a.hpgl')], ['a'], harness.options);
+    expect(harness.workers[0].messages[0].options).toEqual({ strokeMode: 'outline' });
+  });
+
+  it('rejects an unknown strokeMode before creating a worker', () => {
+    const harness = setup();
+    expect(() => createConversionJob([], [], {
+      ...harness.options, strokeMode: 'fill',
+    })).toThrow(RangeError);
+    expect(harness.workerFactory).not.toHaveBeenCalled();
+  });
+
   it('rejects a matching protocol error and terminates', async () => {
     const harness = setup();
     const job = createConversionJob([file('a')], ['a'], harness.options);

@@ -34,7 +34,11 @@ function validateArguments(files, layerNames, options) {
   if (options.workerFactory !== undefined && typeof options.workerFactory !== 'function') {
     throw new TypeError('Conversion workerFactory must be a function');
   }
-  return workerFiles;
+  const strokeMode = options.strokeMode ?? 'outline';
+  if (strokeMode !== 'outline' && strokeMode !== 'centerline') {
+    throw new RangeError('Gerber strokeMode must be outline or centerline');
+  }
+  return { workerFiles, strokeMode };
 }
 
 function nativeWorkerError(event) {
@@ -47,7 +51,7 @@ function nativeWorkerError(event) {
 }
 
 export function createConversionJob(files, layerNames, options = {}) {
-  const workerFiles = validateArguments(files, layerNames, options);
+  const { workerFiles, strokeMode } = validateArguments(files, layerNames, options);
 
   const workerFactory = options.workerFactory ?? (() => new ConverterWorker());
   const worker = workerFactory();
@@ -101,7 +105,13 @@ export function createConversionJob(files, layerNames, options = {}) {
   };
 
   try {
-    worker.postMessage({ type: 'convert', requestId, files: workerFiles, layerNames });
+    worker.postMessage({
+      type: 'convert',
+      requestId,
+      files: workerFiles,
+      layerNames,
+      options: { strokeMode },
+    });
   } catch (error) {
     settle(rejectPromise, error instanceof Error ? error : new Error('Worker post failed'));
   }

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as parserModule from '../src/hpgl/parser.js';
-import { convertInputs } from '../src/converter.js';
+import { convertInputs, parseInputs } from '../src/converter.js';
 import { parseDxfTags, recordValues, records, sectionTags } from './dxf/dxf-tags.js';
 
-const ascii = text => new TextEncoder().encode(text);
+const ascii = (...lines) => new TextEncoder().encode(lines.join('\n'));
 const decode = buffer => new TextDecoder().decode(buffer);
 
 function section(text, name) {
@@ -219,5 +219,123 @@ describe('convertInputs', () => {
     ['fake sentinel', [{ name: 'a', layerName: 'a', data: null }], () => {}, /data.*Uint8Array/i],
   ])('rejects %s before conversion', async (_label, inputs, progress, message) => {
     await expect(convertInputs(inputs, progress)).rejects.toThrow(message);
+  });
+
+  it('rejects an unknown Gerber strokeMode', async () => {
+    await expect(convertInputs([], () => {}, { strokeMode: 'fill' })).rejects.toThrow(RangeError);
+    await expect(convertInputs([], () => {}, { strokeMode: 'fill' })).rejects.toThrow(
+      'Gerber strokeMode must be outline or centerline',
+    );
+    expect(() => parseInputs([], { strokeMode: 'fill' })).toThrow(RangeError);
+  });
+});
+
+describe('manufacturing conversion', () => {
+  const gerber = ascii(
+    '%FSLAX46Y46*%',
+    '%MOMM*%',
+    '%ADD10C,0.200000*%',
+    'D10*',
+    'X0Y0D02*',
+    'X5000000Y0D01*',
+    'M02*',
+  );
+  const excellon = ascii(
+    'M48',
+    'METRIC',
+    'T01C0.800',
+    '%',
+    'G90',
+    'T01',
+    'X1.0Y2.0',
+    'M30',
+  );
+  const sidecar = ascii(
+    'Board Name : demo',
+    'other.G01  :  Copper      [Top Side]',
+  );
+
+  const mixedInputs = [
+    { name: 'drawing.H01', layerName: 'hpgl', data: ascii('SP2;PA0,0;PD40,0;PU;') },
+    { name: 'board.gtl', layerName: 'gtl', data: gerber, kind: 'gerber', path: 'board.gtl' },
+    { name: 'board.drl', layerName: 'drill', data: excellon, kind: 'excellon', path: 'board.drl' },
+    {
+      name: 'board_X-GBLIST.txt',
+      layerName: 'list',
+      data: sidecar,
+      kind: 'gerber-list',
+      path: 'board_X-GBLIST.txt',
+    },
+  ];
+
+  it('dispatches HPGL, Gerber, Excellon and skips sidecars as layers', async () => {
+    const progress = [];
+    const result = await convertInputs(mixedInputs, event => progress.push(event), {
+      strokeMode: 'centerline',
+    });
+    expect(result.totals.fileCount).toBe(3);
+    expect(result.files.map(file => file.name)).toEqual([
+      'drawing.H01', 'board.gtl', 'board.drl',
+    ]);
+    expect(progress.map(event => event.fileName)).toEqual([
+      'drawing.H01', 'board.gtl', 'board.drl',
+    ]);
+    expect(progress.every(event => event.total === 3)).toBe(true);
+    expect(result.files.every(file => file.geometryCount > 0)).toBe(true);
+
+    const dxf = decode(result.buffer);
+    const tables = section(dxf, 'TABLES');
+    expect(tables).toContain('2\nhpgl\n');
+    expect(tables).toContain('2\ngtl\n');
+    expect(tables).toContain('2\ndrill\n');
+    expect(tables).not.toContain('2\nlist\n');
+  });
+
+  it('uses effectiveLayerName when layerName is empty', async () => {
+    const result = await convertInputs([
+      { name: 'drawing.H01', layerName: '', data: ascii('PD40,0;PU;') },
+    ], () => {});
+    expect(result.files[0].layerName).toBe('drawing');
+  });
+
+  it('merges unmatched sidecar diagnostics into totals only', async () => {
+    const result = await convertInputs([
+      {
+        name: 'left/P-00620-1.dr1',
+        path: 'left/P-00620-1.dr1',
+        kind: 'excellon',
+        layerName: 'left',
+        data: ascii('T01', 'X0Y0', 'M30'),
+      },
+      {
+        name: 'right/P-00620-1.dr1',
+        path: 'right/P-00620-1.dr1',
+        kind: 'excellon',
+        layerName: 'right',
+        data: ascii('T01', 'X0Y0', 'M30'),
+      },
+      {
+        name: 'other/P-00620-1_DRLIST_M.txt',
+        path: 'other/P-00620-1_DRLIST_M.txt',
+        kind: 'drill-list',
+        layerName: 'list',
+        data: ascii(
+          'Board Name : P-00620-1',
+          'File Name : P-00620-1.dr1',
+          'Integers 4 , Fractions 2',
+          'Units : mm.',
+        ),
+      },
+    ], () => {});
+
+    expect(result.files.map(file => file.name)).toEqual([
+      'left/P-00620-1.dr1', 'right/P-00620-1.dr1',
+    ]);
+    expect(result.files.some(file => file.name.includes('DRLIST'))).toBe(false);
+    expect(result.totals.fileCount).toBe(2);
+    expect(result.totals.warningCount).toBeGreaterThan(0);
+    expect(result.files.every(file => (
+      file.diagnostics.every(diagnostic => diagnostic.fileName !== 'P-00620-1_DRLIST_M.txt')
+    ))).toBe(true);
   });
 });

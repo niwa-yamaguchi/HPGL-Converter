@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { createPreviewJob } from '../../src/viewer/preview-client.js';
 import { handlePreviewMessage } from '../../src/viewer/preview.worker.js';
+import { handleConversionMessage } from '../../src/worker/converter.worker.js';
 
 class FakeWorker {
   constructor() {
@@ -65,6 +66,29 @@ describe('createPreviewJob', () => {
     expect(onProgress).toHaveBeenCalledOnce();
     expect(onProgress).toHaveBeenCalledWith({ index: 1, total: 1 });
     expect(harness.worker.terminateCount).toBe(1);
+  });
+
+  it('posts strokeMode on the preview message', () => {
+    const harness = setup();
+    createPreviewJob([file('board.gtl')], ['gtl'], {
+      ...harness.options, strokeMode: 'centerline',
+    });
+    expect(harness.worker.messages[0]).toMatchObject({
+      type: 'preview',
+      options: { strokeMode: 'centerline' },
+    });
+  });
+
+  it('defaults posted strokeMode to outline', () => {
+    const harness = setup();
+    createPreviewJob([file('a.hpgl')], ['a'], harness.options);
+    expect(harness.worker.messages[0].options).toEqual({ strokeMode: 'outline' });
+  });
+
+  it('rejects an unknown strokeMode before creating a worker', () => {
+    const workerFactory = vi.fn(() => new FakeWorker());
+    expect(() => createPreviewJob([], [], { workerFactory, strokeMode: 'fill' })).toThrow(RangeError);
+    expect(workerFactory).not.toHaveBeenCalled();
   });
 
   it('cancels once with AbortError and ignores later settlement', async () => {
@@ -158,26 +182,16 @@ describe('preview worker protocol', () => {
     }, message => posted.push(message));
 
     expect(order).toEqual(['bad', 'good']);
+    expect(posted[0]).toMatchObject({
+      type: 'progress', requestId: 'preview-7',
+      event: { phase: 'reading', fileName: 'bad.hpgl', index: 1, total: 2 },
+    });
+    expect(posted[1]).toMatchObject({
+      type: 'progress', requestId: 'preview-7',
+      event: { phase: 'reading', fileName: 'good.hpgl', index: 2, total: 2 },
+    });
     expect(posted.map(message => message.type)).toEqual([
       'progress', 'progress', 'progress', 'progress', 'complete',
-    ]);
-    expect(posted.slice(0, 4)).toMatchObject([
-      {
-        type: 'progress', requestId: 'preview-7',
-        event: { phase: 'reading', fileName: 'bad.hpgl', index: 1, total: 2 },
-      },
-      {
-        type: 'progress', requestId: 'preview-7',
-        event: { phase: 'parsed', fileName: 'bad.hpgl', index: 1, total: 2 },
-      },
-      {
-        type: 'progress', requestId: 'preview-7',
-        event: { phase: 'reading', fileName: 'good.hpgl', index: 2, total: 2 },
-      },
-      {
-        type: 'progress', requestId: 'preview-7',
-        event: { phase: 'parsed', fileName: 'good.hpgl', index: 2, total: 2 },
-      },
     ]);
     const result = posted[4].result;
     expect(result.files[0]).toMatchObject({
@@ -185,7 +199,7 @@ describe('preview worker protocol', () => {
       geometryCount: 0, errorCount: 1, warningCount: 0,
       diagnostics: [{
         severity: 'error', fileName: 'bad.hpgl', command: 'FILE', offset: 0,
-        message: 'cannot read', skippedCommands: 1, skippedShapes: 0,
+        message: 'cannot read', skippedCommands: 0, skippedShapes: 0,
       }],
     });
     expect(result.files[1]).toMatchObject({
@@ -208,6 +222,74 @@ describe('preview worker protocol', () => {
     expect(posted).toEqual([{
       type: 'error', requestId: 'bad-request', message: expect.any(String),
     }]);
+  });
+
+  it('matches conversion per-file geometry and diagnostic counts', async () => {
+    const gerber = [
+      '%FSLAX46Y46*%',
+      '%MOMM*%',
+      '%ADD10C,0.200000*%',
+      'D10*',
+      'X0Y0D02*',
+      'X5000000Y0D01*',
+      'M02*',
+    ].join('\n');
+    const excellon = [
+      'M48', 'METRIC', 'T01C0.800', '%', 'G90', 'T01', 'X1.0Y2.0', 'M30',
+    ].join('\n');
+    const files = [
+      {
+        name: 'drawing.H01',
+        blob: { async arrayBuffer() { return new TextEncoder().encode('PD40,0;PU;').buffer; } },
+      },
+      {
+        name: 'board.gtl',
+        kind: 'gerber',
+        path: 'board.gtl',
+        blob: { async arrayBuffer() { return new TextEncoder().encode(gerber).buffer; } },
+      },
+      {
+        name: 'board.drl',
+        kind: 'excellon',
+        path: 'board.drl',
+        blob: { async arrayBuffer() { return new TextEncoder().encode(excellon).buffer; } },
+      },
+      {
+        name: 'board_X-GBLIST.txt',
+        kind: 'gerber-list',
+        path: 'board_X-GBLIST.txt',
+        blob: {
+          async arrayBuffer() {
+            return new TextEncoder().encode('Board Name : demo\nother.G01  :  Copper      [Top Side]').buffer;
+          },
+        },
+      },
+    ];
+    const layerNames = ['hpgl', 'gtl', 'drill', 'list'];
+    const options = { strokeMode: 'centerline' };
+    const previewPosted = [];
+    const convertPosted = [];
+
+    await handlePreviewMessage({
+      type: 'preview', requestId: 'preview-mix', files, layerNames, options,
+    }, message => previewPosted.push(message));
+    await handleConversionMessage({
+      type: 'convert', requestId: 'convert-mix', files, layerNames, options,
+    }, message => convertPosted.push(message));
+
+    const preview = previewPosted.find(message => message.type === 'complete').result;
+    const converted = convertPosted.find(message => message.type === 'complete').result;
+    const counts = filesResult => filesResult.map(file => ({
+      name: file.name,
+      geometryCount: file.geometryCount,
+      errorCount: file.errorCount,
+      warningCount: file.warningCount,
+    }));
+
+    expect(counts(preview.files)).toEqual(counts(converted.files));
+    expect(preview.files.map(file => file.name)).toEqual([
+      'drawing.H01', 'board.gtl', 'board.drl',
+    ]);
   });
 
   it('uses an inline worker and contains no network API calls', async () => {

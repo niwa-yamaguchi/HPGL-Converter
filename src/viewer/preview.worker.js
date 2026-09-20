@@ -1,4 +1,5 @@
-import { parseHpgl } from '../hpgl/parser.js';
+import { parseInputs } from '../converter.js';
+import { classifyInputName } from '../files/file-policy.js';
 
 function safeMessage(error) {
   if (error instanceof Error && error.message) {
@@ -22,24 +23,18 @@ function validateRequest(message) {
   }
 }
 
-function failedFile(fileName, layerName, error) {
-  return {
-    name: fileName,
+function workerInput(file, layerName, data, readError) {
+  const input = {
+    name: file.name,
+    path: file.path ?? file.name,
+    kind: file.kind ?? classifyInputName(file.name),
     layerName,
-    geometries: [],
-    geometryCount: 0,
-    errorCount: 1,
-    warningCount: 0,
-    diagnostics: [{
-      severity: 'error',
-      fileName,
-      command: 'FILE',
-      offset: 0,
-      message: safeMessage(error),
-      skippedCommands: 1,
-      skippedShapes: 0,
-    }],
+    data,
   };
+  if (readError !== undefined) {
+    input.readError = readError;
+  }
+  return input;
 }
 
 export async function handlePreviewMessage(message, post) {
@@ -51,7 +46,7 @@ export async function handlePreviewMessage(message, post) {
       throw new TypeError('Worker post callback must be a function');
     }
 
-    const files = [];
+    const inputs = [];
     for (let index = 0; index < message.files.length; index += 1) {
       const file = message.files[index];
       const layerName = message.layerNames[index];
@@ -64,38 +59,32 @@ export async function handlePreviewMessage(message, post) {
         throw new TypeError(`Preview layerName ${index} must be a string`);
       }
 
-      const progress = phase => post({
+      post({
         type: 'progress',
         requestId,
         event: {
-          phase,
+          phase: 'reading',
           fileName: file.name,
           index: index + 1,
           total: message.files.length,
         },
       });
-
-      progress('reading');
       try {
-        const parsed = parseHpgl(new Uint8Array(await file.blob.arrayBuffer()), {
-          fileName: file.name,
-          layerName,
-        });
-        files.push({
-          name: file.name,
-          layerName,
-          geometries: parsed.geometries,
-          geometryCount: parsed.summary.geometryCount,
-          errorCount: parsed.summary.errorCount,
-          warningCount: parsed.summary.warningCount,
-          diagnostics: parsed.diagnostics,
-        });
+        const buffer = await file.blob.arrayBuffer();
+        inputs.push(workerInput(file, layerName, new Uint8Array(buffer)));
       } catch (error) {
-        files.push(failedFile(file.name, layerName, error));
+        inputs.push(workerInput(file, layerName, null, safeMessage(error)));
       }
-      progress('parsed');
     }
 
+    const parsed = parseInputs(inputs, {
+      strokeMode: message.options?.strokeMode ?? 'outline',
+      onProgress: event => post({ type: 'progress', requestId, event }),
+    });
+    const files = parsed.files.map(file => ({
+      ...file,
+      geometries: parsed.geometries.filter(geometry => geometry.fileName === file.name),
+    }));
     post({ type: 'complete', requestId, result: { files } });
   } catch (error) {
     post({ type: 'error', requestId, message: safeMessage(error) });
