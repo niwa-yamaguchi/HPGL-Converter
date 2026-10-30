@@ -240,7 +240,6 @@ describe('mountApp', () => {
     expect(document.body.textContent).toContain('ファイルは外部へ送信されません');
     expect(document.body.textContent).toContain('.hpgl');
     expect(document.body.textContent).toContain('HPGL: 40単位 = 1 mm／基板データ: ファイル指定単位');
-    expect(document.body.textContent).toContain('描画線を幅なしで出力');
     expect(document.querySelector('[aria-live="polite"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="progress"]').getAttribute('aria-label'))
       .toBe('変換進捗');
@@ -255,7 +254,6 @@ describe('mountApp', () => {
       .toContain('HPGL／Gerber／Excellon');
     expect(document.querySelector('[data-testid="viewer-canvas"]').getAttribute('aria-label'))
       .toContain('HPGL／Gerber／Excellon');
-    expect(document.querySelector('[data-testid="centerline-mode"]')).not.toBeNull();
     expect(input.hidden || input.tabIndex === -1).toBe(true);
     expect(document.querySelector('[data-testid="output-name"]').value).toBe('converted.dxf');
     const click = vi.spyOn(input, 'click');
@@ -312,7 +310,7 @@ describe('mountApp', () => {
     );
   });
 
-  it('passes the global centerline setting to preview and conversion', async () => {
+  it('sets the centerline mode per Gerber file for preview and conversion', () => {
     const createPreviewJob = vi.fn(() => ({
       promise: Promise.resolve({ files: [] }),
       cancel: vi.fn(),
@@ -322,28 +320,6 @@ describe('mountApp', () => {
       cancel: vi.fn(),
     }));
     mount({ createPreviewJob, createConversionJob });
-    setInputFiles(document.querySelector('[data-testid="file-input"]'), [hpglFile('sample.hpgl')]);
-
-    const checkbox = document.querySelector('[data-testid="centerline-mode"]');
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-    expect(createPreviewJob).toHaveBeenLastCalledWith(
-      expect.any(Array), expect.any(Array),
-      expect.objectContaining({ strokeMode: 'centerline' }),
-    );
-    document.querySelector('[data-testid="convert-button"]').click();
-    expect(createConversionJob).toHaveBeenCalledWith(
-      expect.any(Array), expect.any(Array),
-      expect.objectContaining({ strokeMode: 'centerline' }),
-    );
-  });
-
-  it('overrides the centerline setting per Gerber file', () => {
-    const createPreviewJob = vi.fn(() => ({
-      promise: Promise.resolve({ files: [] }),
-      cancel: vi.fn(),
-    }));
-    mount({ createPreviewJob });
     setInputFiles(document.querySelector('[data-testid="file-input"]'), [
       hpglFile('top.gtl'), hpglFile('bottom.gbl'), hpglFile('sample.hpgl'),
     ]);
@@ -352,16 +328,13 @@ describe('mountApp', () => {
     const rowToggle = document.querySelectorAll('[data-testid="file-centerline"]')[1];
     rowToggle.checked = true;
     rowToggle.dispatchEvent(new Event('change', { bubbles: true }));
-    let files = createPreviewJob.mock.lastCall[0];
-    expect(files.map(file => file.strokeMode)).toEqual([undefined, 'centerline', undefined]);
+    expect(createPreviewJob.mock.lastCall[0].map(file => file.strokeMode))
+      .toEqual([undefined, 'centerline', undefined]);
+    expect(document.querySelectorAll('[data-testid="file-centerline"]')[1].checked).toBe(true);
 
-    const global = document.querySelector('[data-testid="centerline-mode"]');
-    global.checked = true;
-    global.dispatchEvent(new Event('change', { bubbles: true }));
-    files = createPreviewJob.mock.lastCall[0];
-    expect(files.map(file => file.strokeMode)).toEqual([undefined, undefined, undefined]);
-    expect([...document.querySelectorAll('[data-testid="file-centerline"]')]
-      .every(toggle => toggle.checked)).toBe(true);
+    document.querySelector('[data-testid="convert-button"]').click();
+    expect(createConversionJob.mock.lastCall[0].map(file => file.strokeMode))
+      .toEqual([undefined, 'centerline', undefined]);
   });
 
   it('disables convert for auxiliary-only input and labels those rows as auxiliary', () => {
@@ -406,7 +379,7 @@ describe('mountApp', () => {
         expect.objectContaining({ name: 'board.gbr' }),
       ],
       expect.any(Array),
-      expect.objectContaining({ onProgress: expect.any(Function), strokeMode: 'outline' }),
+      expect.objectContaining({ onProgress: expect.any(Function) }),
     );
     await vi.waitFor(() => {
       const rows = [...document.querySelectorAll('[data-testid="file-row"]')];

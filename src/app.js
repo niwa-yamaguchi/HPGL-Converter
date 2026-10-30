@@ -194,10 +194,6 @@ export function mountApp(root, deps = {}) {
           <span>固定スケール</span>
           <strong>HPGL: 40単位 = 1 mm／基板データ: ファイル指定単位</strong>
         </div>
-        <label class="setting-check">
-          <input data-testid="centerline-mode" type="checkbox">
-          <span>描画線を幅なしで出力（全ファイル一括。行ごとに変更可）</span>
-        </label>
       </section>
 
       <section class="panel action-panel" aria-labelledby="action-heading">
@@ -234,7 +230,6 @@ export function mountApp(root, deps = {}) {
     viewerEmpty: root.querySelector('[data-testid="viewer-empty"]'),
     viewerFit: root.querySelector('[data-testid="viewer-fit"]'),
     outputName: root.querySelector('[data-testid="output-name"]'),
-    centerlineMode: root.querySelector('[data-testid="centerline-mode"]'),
     convert: root.querySelector('[data-testid="convert-button"]'),
     cancel: root.querySelector('[data-testid="cancel-button"]'),
     progressWrap: root.querySelector('[data-testid="progress-wrap"]'),
@@ -252,7 +247,6 @@ export function mountApp(root, deps = {}) {
     importToken: null,
     outputNameSeeded: false,
     outputNameEdited: false,
-    strokeMode: 'outline',
     layerNames: [],
     progressByIndex: new Map(),
     progressIndex: 0,
@@ -331,7 +325,7 @@ export function mountApp(root, deps = {}) {
   }
 
   function jobOptions(onProgress) {
-    return { onProgress, strokeMode: state.strokeMode };
+    return { onProgress };
   }
 
   function clearResult() {
@@ -758,7 +752,7 @@ export function mountApp(root, deps = {}) {
           const stroke = element('input');
           stroke.type = 'checkbox';
           stroke.dataset.testid = 'file-centerline';
-          stroke.checked = (file.strokeMode ?? state.strokeMode) === 'centerline';
+          stroke.checked = file.strokeMode === 'centerline';
           stroke.disabled = locked;
           stroke.setAttribute('aria-label', `${file.name} の描画線を幅なしで出力`);
           stroke.addEventListener('change', () => setFileStrokeMode(index, stroke.checked));
@@ -785,7 +779,6 @@ export function mountApp(root, deps = {}) {
     nodes.input.disabled = locked;
     nodes.dropZone.disabled = locked;
     nodes.outputName.disabled = state.converting;
-    nodes.centerlineMode.disabled = locked;
     nodes.convert.disabled = locked || !hasConvertibleInput();
     nodes.cancel.hidden = !state.converting;
   }
@@ -1228,15 +1221,6 @@ export function mountApp(root, deps = {}) {
   });
   listen(nodes.outputName, 'input', () => {
     state.outputNameEdited = true;
-  });
-  listen(nodes.centerlineMode, 'change', () => {
-    state.strokeMode = nodes.centerlineMode.checked ? 'centerline' : 'outline';
-    if (state.importing || state.converting) {
-      return;
-    }
-    state.files = state.files.map(({ strokeMode: _override, ...file }) => file);
-    clearResult();
-    startPreview();
   });
   listen(nodes.convert, 'click', startConversion);
   listen(nodes.viewerFit, 'click', fitPreview);
