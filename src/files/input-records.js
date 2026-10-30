@@ -56,10 +56,14 @@ export function toWorkerInput(record) {
     throw new TypeError('Input record is invalid');
   }
   assertBlob(record.blob, 'Input record blob');
-  return {
+  const input = {
     name: record.name,
     path: typeof record.path === 'string' ? record.path : record.name,
     kind: typeof record.kind === 'string' ? record.kind : classifyInputName(record.name),
     blob: record.blob,
   };
+  if (record.strokeMode !== undefined) {
+    input.strokeMode = record.strokeMode;
+  }
+  return input;
 }

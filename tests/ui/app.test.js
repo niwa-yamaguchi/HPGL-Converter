@@ -338,6 +338,32 @@ describe('mountApp', () => {
     );
   });
 
+  it('overrides the centerline setting per Gerber file', () => {
+    const createPreviewJob = vi.fn(() => ({
+      promise: Promise.resolve({ files: [] }),
+      cancel: vi.fn(),
+    }));
+    mount({ createPreviewJob });
+    setInputFiles(document.querySelector('[data-testid="file-input"]'), [
+      hpglFile('top.gtl'), hpglFile('bottom.gbl'), hpglFile('sample.hpgl'),
+    ]);
+    expect(document.querySelectorAll('[data-testid="file-centerline"]')).toHaveLength(2);
+
+    const rowToggle = document.querySelectorAll('[data-testid="file-centerline"]')[1];
+    rowToggle.checked = true;
+    rowToggle.dispatchEvent(new Event('change', { bubbles: true }));
+    let files = createPreviewJob.mock.lastCall[0];
+    expect(files.map(file => file.strokeMode)).toEqual([undefined, 'centerline', undefined]);
+
+    const global = document.querySelector('[data-testid="centerline-mode"]');
+    global.checked = true;
+    global.dispatchEvent(new Event('change', { bubbles: true }));
+    files = createPreviewJob.mock.lastCall[0];
+    expect(files.map(file => file.strokeMode)).toEqual([undefined, undefined, undefined]);
+    expect([...document.querySelectorAll('[data-testid="file-centerline"]')]
+      .every(toggle => toggle.checked)).toBe(true);
+  });
+
   it('disables convert for auxiliary-only input and labels those rows as auxiliary', () => {
     mount({ createConversionJob: vi.fn() });
     const input = document.querySelector('[data-testid="file-input"]');
@@ -385,12 +411,12 @@ describe('mountApp', () => {
     await vi.waitFor(() => {
       const rows = [...document.querySelectorAll('[data-testid="file-row"]')];
       const gerberRow = rows.find(row => row.textContent.includes('board.gbr'));
-      expect(gerberRow?.children[4].textContent).toBe('5');
+      expect(gerberRow?.children[5].textContent).toBe('5');
     });
     const rows = [...document.querySelectorAll('[data-testid="file-row"]')];
     const sidecarRow = rows.find(row => row.textContent.includes('DRLIST'));
     expect(sidecarRow.textContent).toContain('補助');
-    expect(sidecarRow.children[4].textContent).toBe('0');
+    expect(sidecarRow.children[5].textContent).toBe('0');
     expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(false);
     expect(document.querySelector('[data-testid="viewer-controls"]').textContent)
       .toContain('board.gbr');
@@ -851,14 +877,14 @@ describe('mountApp', () => {
     parsed.files[1].geometryCount = 9;
     setInputFiles(document.querySelector('[data-testid="file-input"]'), files);
     firstJob.resolve(parsed);
-    await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="file-row"]')[0].children[4].textContent).toBe('7'));
+    await vi.waitFor(() => expect(document.querySelectorAll('[data-testid="file-row"]')[0].children[5].textContent).toBe('7'));
 
     document.querySelectorAll('[data-testid="remove-button"]')[0].click();
 
-    expect(document.querySelector('[data-testid="file-row"]').children[4].textContent).toBe('0');
+    expect(document.querySelector('[data-testid="file-row"]').children[5].textContent).toBe('0');
     secondJob.reject(new Error('preview crashed'));
     await vi.waitFor(() => expect(document.querySelector('[data-testid="viewer-status"]').textContent).toContain('preview crashed'));
-    expect(document.querySelector('[data-testid="file-row"]').children[4].textContent).toBe('0');
+    expect(document.querySelector('[data-testid="file-row"]').children[5].textContent).toBe('0');
     expect(document.querySelector('[data-testid="convert-button"]').disabled).toBe(false);
   });
 

@@ -291,6 +291,17 @@ describe('manufacturing conversion', () => {
     expect(tables).not.toContain('2\nlist\n');
   });
 
+  it('lets a per-input strokeMode override the global one', () => {
+    const gtl = mixedInputs[1];
+    const types = parsed => parsed.geometries.map(geometry => geometry.type).sort().join();
+    const global = parseInputs([gtl], { strokeMode: 'centerline' });
+    const overridden = parseInputs([{ ...gtl, strokeMode: 'outline' }], { strokeMode: 'centerline' });
+    const outline = parseInputs([gtl], { strokeMode: 'outline' });
+    expect(types(overridden)).toBe(types(outline));
+    expect(types(overridden)).not.toBe(types(global));
+    expect(() => parseInputs([{ ...gtl, strokeMode: 'fill' }])).toThrow(RangeError);
+  });
+
   it('uses effectiveLayerName when layerName is empty', async () => {
     const result = await convertInputs([
       { name: 'drawing.H01', layerName: '', data: ascii('PD40,0;PU;') },

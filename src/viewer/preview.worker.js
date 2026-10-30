@@ -31,6 +31,9 @@ function workerInput(file, layerName, data, readError) {
     layerName,
     data,
   };
+  if (file.strokeMode !== undefined) {
+    input.strokeMode = file.strokeMode;
+  }
   if (readError !== undefined) {
     input.readError = readError;
   }

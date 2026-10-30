@@ -152,6 +152,7 @@ export function mountApp(root, deps = {}) {
                 <th scope="col">ファイル名</th>
                 <th scope="col">サイズ</th>
                 <th scope="col">レイヤー</th>
+                <th scope="col">幅なし</th>
                 <th scope="col">状態</th>
                 <th scope="col">図形</th>
                 <th scope="col">エラー</th>
@@ -195,7 +196,7 @@ export function mountApp(root, deps = {}) {
         </div>
         <label class="setting-check">
           <input data-testid="centerline-mode" type="checkbox">
-          <span>描画線を幅なしで出力</span>
+          <span>描画線を幅なしで出力（全ファイル一括。行ごとに変更可）</span>
         </label>
       </section>
 
@@ -719,6 +720,15 @@ export function mountApp(root, deps = {}) {
     announce(`${removed.name} を削除しました。`);
   }
 
+  function setFileStrokeMode(index, centerline) {
+    if (state.importing || state.converting) {
+      return;
+    }
+    state.files[index] = { ...state.files[index], strokeMode: centerline ? 'centerline' : 'outline' };
+    clearResult();
+    startPreview();
+  }
+
   function renderFiles() {
     nodes.fileList.replaceChildren();
     nodes.fileCount.textContent = `${state.files.length} ファイル`;
@@ -727,7 +737,7 @@ export function mountApp(root, deps = {}) {
     if (state.files.length === 0) {
       const row = element('tr', 'empty-row');
       const cell = element('td', '', 'ファイルはまだ追加されていません。');
-      cell.colSpan = 8;
+      cell.colSpan = 9;
       row.append(cell);
       nodes.fileList.append(row);
     } else {
@@ -743,6 +753,17 @@ export function mountApp(root, deps = {}) {
           'layer-name',
           isAuxiliaryInput(file) ? '補助' : state.layerNames[index],
         );
+        const strokeCell = element('td');
+        if (inputKind(file) === 'gerber') {
+          const stroke = element('input');
+          stroke.type = 'checkbox';
+          stroke.dataset.testid = 'file-centerline';
+          stroke.checked = (file.strokeMode ?? state.strokeMode) === 'centerline';
+          stroke.disabled = locked;
+          stroke.setAttribute('aria-label', `${file.name} の描画線を幅なしで出力`);
+          stroke.addEventListener('change', () => setFileStrokeMode(index, stroke.checked));
+          strokeCell.append(stroke);
+        }
         const statusCell = element('td');
         statusCell.append(element('span', `status-pill status-${display.statusKind}`, display.status));
         const geometryCell = element('td', 'numeric', String(display.geometryCount));
@@ -756,7 +777,7 @@ export function mountApp(root, deps = {}) {
         remove.setAttribute('aria-label', `${file.name} を削除`);
         remove.addEventListener('click', () => removeFile(index));
         actionCell.append(remove);
-        row.append(nameCell, sizeCell, layerCell, statusCell, geometryCell, errorCell, warningCell, actionCell);
+        row.append(nameCell, sizeCell, layerCell, strokeCell, statusCell, geometryCell, errorCell, warningCell, actionCell);
         nodes.fileList.append(row);
       });
     }
@@ -1213,6 +1234,7 @@ export function mountApp(root, deps = {}) {
     if (state.importing || state.converting) {
       return;
     }
+    state.files = state.files.map(({ strokeMode: _override, ...file }) => file);
     clearResult();
     startPreview();
   });

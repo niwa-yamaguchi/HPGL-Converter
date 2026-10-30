@@ -19,6 +19,10 @@ function validateInput(input, index) {
     throw new TypeError(`Input ${index} layerName must be a string`);
   }
 
+  if (input.strokeMode !== undefined && !STROKE_MODES.has(input.strokeMode)) {
+    throw new RangeError('Gerber strokeMode must be outline or centerline');
+  }
+
   const readFailure = input.data === null && typeof input.readError === 'string';
   if (!(input.data instanceof Uint8Array) && !readFailure) {
     throw new TypeError(`Input ${index} data must be a Uint8Array`);
@@ -263,7 +267,7 @@ export function parseInputs(inputs, options = {}) {
           },
         };
       } else {
-        const parsed = parseDrawable(input, drawable, strokeMode);
+        const parsed = parseDrawable(input, drawable, input.strokeMode ?? strokeMode);
         converted = {
           geometries: parsed.geometries,
           file: {

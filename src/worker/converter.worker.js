@@ -63,6 +63,7 @@ export async function handleConversionMessage(message, post) {
           kind: file.kind ?? classifyInputName(file.name),
           layerName,
           data: new Uint8Array(buffer),
+          ...(file.strokeMode === undefined ? {} : { strokeMode: file.strokeMode }),
         });
       } catch (error) {
         inputs.push({
